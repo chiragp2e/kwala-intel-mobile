@@ -1,45 +1,47 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
+import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import React from 'react';
+import { StatusBar } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { AuthProvider } from './src/auth/AuthContext';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
+import type { RootStackParamList } from './src/navigation/types';
+import { ChatScreen } from './src/screens/ChatScreen';
+import { HistoryScreen } from './src/screens/HistoryScreen';
+import { SignInScreen } from './src/screens/SignInScreen';
+import { colors } from './src/theme/tokens';
 
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+const navTheme = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: colors.background, card: colors.background, border: colors.border, primary: colors.primary },
+};
 
+export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <StatusBar barStyle="light-content" />
+      <ErrorBoundary>
+        <AuthProvider>
+          <NavigationContainer theme={navTheme}>
+            <Stack.Navigator screenOptions={{ contentStyle: { backgroundColor: colors.background } }}>
+              <Stack.Screen name="Chat" component={ChatScreen} options={{ headerShown: false }} />
+              <Stack.Screen
+                name="History"
+                component={HistoryScreen}
+                options={{
+                  title: 'Chat history',
+                  headerStyle: { backgroundColor: colors.background },
+                  headerTintColor: colors.textPrimary,
+                  headerBackTitle: 'Back',
+                }}
+              />
+              <Stack.Screen name="SignIn" component={SignInScreen} options={{ headerShown: false, presentation: 'modal' }} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </AuthProvider>
+      </ErrorBoundary>
     </SafeAreaProvider>
   );
 }
-
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-
-  return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-});
-
-export default App;

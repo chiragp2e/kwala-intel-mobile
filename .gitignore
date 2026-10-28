@@ -73,3 +73,19 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+# Kwala
+.env
+.env.*
+!.env.example
+src/config/env.generated.ts
+.codesigning/
+*.pem
+*.p12
+*.keystore
+dist/
+!certs/certificate.pem
+
+# Expo
+.expo
+dist/
+web-build/

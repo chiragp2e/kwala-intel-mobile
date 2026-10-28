@@ -1,0 +1,19 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test -- --ci
+      # The embedded JS bundle must build for both platforms.
+      - run: npx expo export:embed --platform ios --dev false --entry-file index.js --bundle-output /tmp/ios.jsbundle --assets-dest /tmp/ios-assets
+      - run: npx expo export:embed --platform android --dev false --entry-file index.js --bundle-output /tmp/android.jsbundle --assets-dest /tmp/android-assets

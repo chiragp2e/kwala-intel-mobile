@@ -1,5 +1,5 @@
 {
-  "name": "KwalaMobile",
+  "name": "kwala-intel-mobile",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -7,13 +7,37 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "env:dev": "APP_ENV=development node scripts/gen-env.js",
+    "env:staging": "APP_ENV=staging node scripts/gen-env.js",
+    "env:production": "APP_ENV=production node scripts/gen-env.js",
+    "postinstall": "node scripts/gen-env.js",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "ios:staging": "APP_ENV=staging node scripts/gen-env.js && xcodebuild -workspace ios/KwalaMobile.xcworkspace -scheme KwalaMobile -configuration Release -sdk iphonesimulator -destination \"generic/platform=iOS Simulator\" -derivedDataPath ios/build/staging EXPO_CHANNEL=staging PRODUCT_BUNDLE_IDENTIFIER=com.kwalaintel.mobile.staging build",
+    "ios:production": "APP_ENV=production node scripts/gen-env.js && xcodebuild -workspace ios/KwalaMobile.xcworkspace -scheme KwalaMobile -configuration Release -sdk iphonesimulator -destination \"generic/platform=iOS Simulator\" -derivedDataPath ios/build/production EXPO_CHANNEL=production build",
+    "android:staging": "APP_ENV=staging node scripts/gen-env.js && cd android && ./gradlew assembleStagingRelease",
+    "android:production": "APP_ENV=production node scripts/gen-env.js && cd android && ./gradlew assembleProductionRelease",
+    "runtime:check": "npx expo-updates runtimeversion:resolve --platform ios --workflow generic && npx expo-updates runtimeversion:resolve --platform android --workflow generic",
+    "fingerprint": "npx @expo/fingerprint . "
   },
   "dependencies": {
+    "@react-native-community/netinfo": "11.4.1",
+    "@react-navigation/native": "^7.5.1",
+    "@react-navigation/native-stack": "^7.21.0",
+    "@supabase/supabase-js": "^2.118.0",
+    "expo": "~54.0.38",
+    "expo-application": "~7.0.8",
+    "expo-constants": "~18.0.14",
+    "expo-crypto": "~15.0.9",
+    "expo-secure-store": "~15.0.8",
+    "expo-updates": "~29.0.20",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "@react-native/new-app-screen": "0.81.5",
-    "react-native-safe-area-context": "^5.5.2"
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
+    "react-native-url-polyfill": "^4.0.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

@@ -1,97 +1,87 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Kwala Intel mobile
 
-# Getting Started
+A minimal, chat-first React Native app for Kwala Intel: sign in with email or mobile OTP, ask market questions, read
+streamed answers, revisit past chats. It talks to the **same backend as the web app** (Supabase auth, the Go API, and the
+chat service); it has no backend of its own.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+- React Native Community CLI, TypeScript (strict), Android + iOS. `ios/` and `android/` are normal native projects.
+- **Versions:** React Native 0.83.10, React 19.2, Expo SDK 55 modules (`expo-updates`, `expo-secure-store`, `expo-crypto`, …).
+  *Why not SDK 58 / RN 0.88 (newest):* SDK 56+ builds a Swift 6.2 package and needs **Xcode 26**; the Mac this was built on has
+  Xcode 16.4. SDK 55 builds with Xcode 16.4. Upgrade to the newest SDK once Xcode 26 is installed (and Apple requires Xcode 26 for
+  App Store uploads anyway). Upgrade steps: bump `expo` and run `npx expo install --fix`, re-run `install-expo-modules`, `pod install`.
+- Dark theme only (the supplied designs are dark).
 
-## Step 1: Start Metro
-
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
-
-To start the Metro dev server, run the following command from the root of your React Native project:
-
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+## Setup
+```
+nvm use 22            # Node >= 20
+npm ci                # also writes src/config/env.generated.ts from .env* (see below)
+cd ios && LANG=en_US.UTF-8 pod install && cd ..      # CocoaPods needs a UTF-8 locale
 ```
 
-## Step 2: Build and run your app
+### Run in development
+```
+cp .env.example .env            # fill in values, or set USE_MOCK_BACKEND=true for a no-credentials demo
+npm run env:dev                 # regenerate env after editing .env
+npm start                       # Metro
+npm run ios                     # or: npm run android   (Android needs a flavor: use Android Studio, or `cd android && ./gradlew installStagingDebug`)
+```
+`USE_MOCK_BACKEND=true` works **only** when `APP_ENV=development`. It signs you in as a fake user and replies with canned text
+so the UI can be shown. Staging and production builds ignore it.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## API and environment configuration
+Values live in `.env.<APP_ENV>` (`.env.staging`, `.env.production`, `.env`), copied from `.env.example`.
+`scripts/gen-env.js` turns them into `src/config/env.generated.ts` (git-ignored), which is bundled into the app.
+**Everything in there is public.** Never put a service-role key, a signing key or any backend secret in it. The Supabase anon key is public by design.
 
-### Android
+| Variable | Meaning |
+|---|---|
+| `API_BASE_URL` | Go API (`kwala-intel-app`), used for `GET /auth/me/context` |
+| `AI_API_BASE_URL` | Chat service: sessions, history, SSE chat |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` | OTP sign-in |
+| `WEB_BASE_URL` | Website for plan / legal links |
+| `USE_MOCK_BACKEND` | Development only |
 
-```sh
-# Using npm
-npm run android
+If any of the four backend values is missing the app opens normally but shows **"Backend not configured"** and disables sign-in.
+Full endpoint list and response shapes: [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
 
-# OR using Yarn
-yarn android
+## Build native apps
+```
+npm run ios:staging  |  npm run ios:production        # xcodebuild Release for the iOS Simulator
+npm run android:staging  |  npm run android:production # APK in android/app/build/outputs/apk/<flavor>/release
+```
+Staging and production differ by id (`com.kwalaintel.mobile[.staging]`), by env file, and by **OTA channel**. For a device/App Store build, open
+`ios/KwalaMobile.xcworkspace` in Xcode, set your team, and archive with the build setting `EXPO_CHANNEL=production` (or `staging`).
+
+## Quality checks
+```
+npm run check    # tsc --noEmit, eslint, jest (what CI runs, plus a JS bundle build for both platforms)
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
+## Project layout
+```
+src/api         HTTP + SSE transport, zod schemas, real backend, dev-only mock
+src/auth        Supabase client, secure (Keychain/Keystore) session storage, AuthContext
+src/chat        transcript reducer, session provisioner, useChat (send / stream / retry / reconcile)
+src/components  Header, Composer, MessageItem, Markdown, banners, error boundary
+src/screens     Chat, History, SignIn
+src/theme       design tokens
+docs/           API_CONTRACT, OTA_RUNBOOK, RELEASE_CHECKLIST
 ```
 
-Then, and every time you update your native dependencies, run:
+## Behaviour worth knowing
+- **Guests** can open the app and see the starter prompts; sending asks them to sign in (the typed text stays in the box).
+- **Send** is optimistic. A failed turn stays in the transcript with a *Try again* button; a refusal the user can't fix by retrying
+  (daily limit, signed out) removes the bubble and puts the text back in the composer.
+- **Streaming** uses `expo/fetch` (RN's built-in `fetch` cannot stream). Stop keeps the partial answer.
+- **Scrolling**: the list is inverted, so new text grows at the bottom and doesn't drag a reader away from older messages.
+- **Background / foreground**: when the app returns to the foreground it re-reads the chat from the server, so an answer that finished while away appears.
+- **Logout** ends the session and clears chat state held in memory; no message content is persisted on the device.
+- **Rich answers**: charts/widgets are not rendered in v1; the answer's text is, with a note pointing to the web app.
 
-```sh
-bundle exec pod install
-```
+## Documentation
+- [docs/OTA_RUNBOOK.md](docs/OTA_RUNBOOK.md): update channels, signing, publish, rollout, rollback
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md): blockers, decisions, known limitations
+- [docs/API_CONTRACT.md](docs/API_CONTRACT.md)
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+## Verified so far
+See the bottom of this file (updated after each verification pass).
