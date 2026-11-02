@@ -10,6 +10,8 @@ export interface Env {
   supabaseAnonKey: string;
   webBaseUrl: string;
   useMockBackend: boolean;
+  /** Razorpay publishable key id for the in-app checkout. Empty means "use the key the server sends". */
+  razorpayKeyId: string;
 }
 
 function appEnv(raw: string | undefined): AppEnv {
@@ -30,7 +32,14 @@ export function readEnv(source: Record<string, string | undefined>): Env {
     // The mock is for development only. Staging and production never get it,
     // whatever the env file says, so a release can't silently run on fake data.
     useMockBackend: env === 'development' && source.USE_MOCK_BACKEND === 'true',
+    razorpayKeyId: razorpayKeyId(env, source.RAZORPAY_KEY_ID),
   };
+}
+
+/** A production build never uses a test key: it would open a test-mode checkout for real customers. */
+function razorpayKeyId(env: AppEnv, raw: string | undefined): string {
+  const key = (raw ?? '').trim();
+  return env === 'production' && key.startsWith('rzp_test_') ? '' : key;
 }
 
 export const env: Env = readEnv(GENERATED_ENV);

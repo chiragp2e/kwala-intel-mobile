@@ -52,6 +52,11 @@ react {
 
     /* Autolinking */
     autolinkLibrariesWithApp()
+    //
+    // Added by install-expo-modules
+    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", rootDir.getAbsoluteFile().getParentFile().getAbsolutePath(), "android", "absolute"].execute(null, rootDir).text.trim())
+    cliFile = new File(["node", "--print", "require.resolve('@expo/cli')"].execute(null, rootDir).text.trim())
+    bundleCommand = "export:embed"
 }
 
 /**
@@ -79,11 +84,27 @@ android {
 
     namespace "com.kwalamobile"
     defaultConfig {
-        applicationId "com.kwalamobile"
+        applicationId "com.kwalaintel.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+    }
+    // Same source, two builds: they differ in id (so both install side by side)
+    // and in the OTA channel they listen to (see AndroidManifest.xml).
+    flavorDimensions "env"
+    productFlavors {
+        staging {
+            dimension "env"
+            applicationIdSuffix ".staging"
+            manifestPlaceholders = [expoChannel: "staging", appScheme: "kwalaintelstaging"]
+            resValue "string", "app_name", "Kwala Intel (Staging)"
+        }
+        production {
+            dimension "env"
+            manifestPlaceholders = [expoChannel: "production", appScheme: "kwalaintel"]
+            resValue "string", "app_name", "Kwala Intel"
+        }
     }
     signingConfigs {
         debug {
@@ -110,6 +131,10 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // Plays the animated GIF splash. Without it Android decodes a GIF as its first frame only.
+    // Keep this on the same version as the Fresco that react-android pulls in.
+    implementation("com.facebook.fresco:animated-gif:3.6.0")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

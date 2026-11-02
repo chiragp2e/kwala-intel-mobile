@@ -1,18 +1,24 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { MIN_TOUCH, colors, radii, spacing, type } from '../theme/tokens';
+import { MIN_TOUCH, colors, fonts, radii, spacing, type } from '../theme/tokens';
+import { Icon, type IconName } from './Icon';
 import { Logo } from './Logo';
+import { Shine, shineGlow } from './Shine';
 
 interface Props {
   signedIn: boolean;
+  /** The plan held, when signed in and known. */
+  plan?: 'free' | 'pro' | 'ultra';
   onHistory: () => void;
   onNewChat: () => void;
   onLogIn: () => void;
-  onSignUp: () => void;
   onAccount: () => void;
+  onPricing: () => void;
+  /** Email or phone, for the avatar initial. */
+  identity?: string;
 }
 
-function IconButton({ glyph, label, onPress }: { glyph: string; label: string; onPress: () => void }) {
+function IconButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
   return (
     <Pressable
       onPress={onPress}
@@ -20,30 +26,50 @@ function IconButton({ glyph, label, onPress }: { glyph: string; label: string; o
       accessibilityLabel={label}
       hitSlop={4}
       style={({ pressed }) => [styles.icon, pressed && { backgroundColor: colors.surfaceHover }]}>
-      <Text style={styles.glyph}>{glyph}</Text>
+      <Icon name={icon} size={23} color={colors.textSecondary} />
     </Pressable>
   );
 }
 
-export function Header({ signedIn, onHistory, onNewChat, onLogIn, onSignUp, onAccount }: Props) {
+/**
+ * Top bar. Guests get a single "Log in" link (creating an account is one tap away on
+ * that screen), free accounts a shiny "Upgrade" pill, paid accounts their plan badge.
+ */
+export function Header({ signedIn, plan, onHistory, onNewChat, onLogIn, onAccount, onPricing, identity }: Props) {
+  const paid = plan === 'pro' || plan === 'ultra';
   return (
     <View style={styles.bar}>
-      <View style={styles.left}>
-        <Logo width={96} />
-      </View>
+      <Logo width={92} />
       {signedIn ? (
         <View style={styles.right}>
-          <IconButton glyph="≡" label="Chat history" onPress={onHistory} />
-          <IconButton glyph="+" label="New chat" onPress={onNewChat} />
-          <IconButton glyph="⋯" label="Account" onPress={onAccount} />
+          {paid ? (
+            <Pressable onPress={onPricing} accessibilityRole="button" accessibilityLabel={`${plan} plan`} style={styles.planBadge}>
+              {plan === 'ultra' ? <Icon name="sparkles" size={13} color="#a9a8ff" /> : null}
+              <Text style={styles.planBadgeText}>{plan === 'ultra' ? 'ULTRA' : 'PRO'}</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={onPricing}
+              accessibilityRole="button"
+              accessibilityLabel="Upgrade, see plans"
+              style={({ pressed }) => [styles.upgrade, shineGlow, pressed && { opacity: 0.85 }]}>
+              <Shine radius={radii.pill} />
+              <Icon name="sparkles" size={14} color={colors.onPrimary} />
+              <Text style={styles.upgradeText}>Upgrade</Text>
+            </Pressable>
+          )}
+          <IconButton icon="panel-left" label="Chat history" onPress={onHistory} />
+          <IconButton icon="square-pen" label="New chat" onPress={onNewChat} />
+          <Pressable onPress={onAccount} accessibilityRole="button" accessibilityLabel="Account" hitSlop={4} style={styles.icon}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{(identity?.trim()[0] ?? 'K').toUpperCase()}</Text>
+            </View>
+          </Pressable>
         </View>
       ) : (
         <View style={styles.right}>
-          <Pressable onPress={onLogIn} accessibilityRole="button" accessibilityLabel="Log in" style={styles.login}>
-            <Text style={styles.loginText}>Log in</Text>
-          </Pressable>
-          <Pressable onPress={onSignUp} accessibilityRole="button" accessibilityLabel="Sign up" style={styles.signup}>
-            <Text style={styles.signupText}>Sign up</Text>
+          <Pressable onPress={onLogIn} accessibilityRole="button" accessibilityLabel="Log in" style={styles.link}>
+            <Text style={styles.linkText}>Log in</Text>
           </Pressable>
         </View>
       )}
@@ -54,7 +80,8 @@ export function Header({ signedIn, onHistory, onNewChat, onLogIn, onSignUp, onAc
 const styles = StyleSheet.create({
   bar: {
     minHeight: 56,
-    paddingHorizontal: spacing.lg,
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -62,18 +89,33 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  left: { flexDirection: 'row', alignItems: 'center' },
-  right: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   icon: { width: MIN_TOUCH, height: MIN_TOUCH, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' },
-  glyph: { color: colors.textSecondary, fontSize: 24, lineHeight: 28 },
-  login: { minHeight: MIN_TOUCH, paddingHorizontal: spacing.md, justifyContent: 'center' },
-  loginText: { ...type.small, color: colors.textSecondary, fontSize: 15 },
-  signup: {
-    minHeight: MIN_TOUCH - 4,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.md,
+  avatar: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.userBubble, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontFamily: fonts.bold, fontSize: 14, color: colors.onPrimary },
+  upgrade: {
+    height: 34,
+    paddingHorizontal: spacing.md,
+    marginRight: spacing.xs,
+    borderRadius: radii.pill,
     backgroundColor: colors.primary,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
-  signupText: { ...type.small, color: colors.onPrimary, fontWeight: '700', fontSize: 15 },
+  upgradeText: { fontFamily: fonts.bold, fontSize: 13, color: colors.onPrimary },
+  planBadge: {
+    height: 30,
+    paddingHorizontal: spacing.md,
+    marginRight: spacing.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: '#6d6cf0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  planBadgeText: { fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1, color: '#a9a8ff' },
+  link: { minHeight: MIN_TOUCH, paddingHorizontal: spacing.sm, justifyContent: 'center' },
+  linkText: { ...type.small, color: colors.textSecondary, fontSize: 15 },
 });

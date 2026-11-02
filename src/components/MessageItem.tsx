@@ -1,9 +1,14 @@
 import React, { memo } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Block } from '../api/schemas';
 import type { ChatMessage } from '../chat/messages';
-import { MIN_TOUCH, colors, radii, spacing, type } from '../theme/tokens';
+import { MIN_TOUCH, colors, radii, spacing, type, fonts } from '../theme/tokens';
+import { BlockList } from '../blocks/BlockList';
+import { normalizeBlocks } from '../blocks/lib/normalize';
+import type { Block as RichBlock } from '../blocks/types';
 import { Markdown } from './markdown';
+import { FadeIn, TypingDots } from './motion';
+import { env } from '../config/env';
 
 /** Prose from blocks, in order, descending into groups. Charts and widgets are counted, not drawn. */
 export function summariseBlocks(blocks: Block[] | undefined): { markdown: string; visuals: number } {
@@ -26,24 +31,27 @@ interface Props {
   message: ChatMessage;
   statusText: string | null;
   onRetry: (assistantId: string) => void;
+  /** A follow-up chip in an answer was tapped: send it as the next message. */
+  onPrompt?: (text: string) => void;
 }
 
-function MessageItemBase({ message, statusText, onRetry }: Props) {
+function MessageItemBase({ message, statusText, onRetry, onPrompt }: Props) {
   if (message.role === 'user') {
     return (
-      <View style={styles.userRow} accessible accessibilityLabel={`You said: ${message.content}`}>
-        <View style={styles.userBubble}>
+      <FadeIn rise={8} duration={220} style={styles.userRow}>
+        <View style={styles.userBubble} accessible accessibilityLabel={`You said: ${message.content}`}>
           <Text style={styles.userText} selectable>
             {message.content}
           </Text>
         </View>
-      </View>
+      </FadeIn>
     );
   }
 
   // Blocks, when present, are the whole answer (as in the web app); otherwise the streamed text.
+  const rich: RichBlock[] = message.blocks?.length ? normalizeBlocks({ blocks: message.blocks as unknown as RichBlock[] }) : [];
   const fromBlocks = summariseBlocks(message.blocks);
-  const markdown = message.blocks?.length ? fromBlocks.markdown : message.content;
+  const markdown = rich.length ? '' : message.blocks?.length ? fromBlocks.markdown : message.content;
   const waiting = message.status === 'streaming' && !markdown;
   const failed = message.status === 'failed';
 
@@ -51,20 +59,20 @@ function MessageItemBase({ message, statusText, onRetry }: Props) {
     <View style={styles.assistantRow} accessibilityLabel="Kwala answer">
       {waiting ? (
         <View style={styles.waiting} accessibilityLiveRegion="polite">
-          <ActivityIndicator color={colors.primary} size="small" />
+          <TypingDots />
           <Text style={styles.status}>{statusText ?? 'Thinking…'}</Text>
         </View>
       ) : failed && !message.content.length ? null : (
         <View style={failed ? styles.failedBody : undefined}>
-          <Markdown source={markdown} />
+          {rich.length ? <BlockList blocks={rich} onPrompt={onPrompt} /> : <Markdown source={markdown} />}
         </View>
       )}
       {message.status === 'streaming' && !waiting && statusText ? <Text style={styles.status}>{statusText}</Text> : null}
-      {fromBlocks.visuals > 0 ? (
+      {!rich.length && fromBlocks.visuals > 0 ? (
         <View style={styles.visualNote}>
           <Text style={styles.visualText}>
             This answer includes {fromBlocks.visuals} chart{fromBlocks.visuals === 1 ? '' : 's'} or visual
-            {fromBlocks.visuals === 1 ? '' : 's'}. Open the same chat on app.kwalaintel.com to see them.
+            {fromBlocks.visuals === 1 ? '' : 's'}. Open the same chat on {env.webBaseUrl.replace(/^https?:\/\//, '')} to see them.
           </Text>
         </View>
       ) : null}
@@ -121,7 +129,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.danger,
   },
-  retryText: { ...type.small, color: colors.danger, fontWeight: '600' },
+  retryText: { ...type.small, color: colors.danger, fontFamily: fonts.semibold },
   visualNote: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
   visualText: { ...type.small, color: colors.textTertiary },
 });

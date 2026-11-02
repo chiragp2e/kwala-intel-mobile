@@ -89,6 +89,16 @@ describe('REST calls', () => {
     await createRealBackend().getMessages('a/b c');
     expect(fetchMock().mock.calls[0][0]).toBe('https://ai.test/api/sessions/a%2Fb%20c/messages');
   });
+
+  it("verifies an in-app checkout with the server's field names", async () => {
+    fetchMock().mockResolvedValue(jsonResponse(200, { data: { status: 'active', plan: 'ultra', plan_code: 'ultra_in_annual_v1' } }));
+    const sub = await createRealBackend().verifyCheckout({ paymentId: 'pay_1', subscriptionId: 'sub_1', signature: 'sig' });
+    expect(sub).toMatchObject({ status: 'active', plan: 'ultra', plan_code: 'ultra_in_annual_v1' });
+    const [url, init] = fetchMock().mock.calls[0];
+    expect(url).toBe('https://api.test/billing/checkout/verify');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ provider_payment_id: 'pay_1', provider_subscription_id: 'sub_1', signature: 'sig' });
+  });
 });
 
 describe('streamChat', () => {

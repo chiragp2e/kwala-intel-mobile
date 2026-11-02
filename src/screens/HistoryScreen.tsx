@@ -1,48 +1,40 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getBackend } from '../api';
 import type { ChatSession } from '../api/schemas';
 import { useAuth } from '../auth/AuthContext';
 import { Button } from '../components/Button';
+import { Icon } from '../components/Icon';
+import { Shine, shineGlow } from '../components/Shine';
+import { groupSessions } from '../lib/groupSessions';
 import type { ScreenProps } from '../navigation/types';
-import { MIN_TOUCH, colors, radii, spacing, type } from '../theme/tokens';
+import { useDeleteSession, useSessions } from '../state/queries';
+import { MIN_TOUCH, colors, fonts, radii, spacing, type } from '../theme/tokens';
 
-function when(iso: string | null | undefined): string {
-  const t = iso ? Date.parse(iso) : NaN;
+function when(s: ChatSession, section: string): string {
+  const t = Date.parse(s.updated_at ?? s.created_at ?? '');
   if (Number.isNaN(t)) return '';
   const d = new Date(t);
-  const days = Math.floor((Date.now() - t) / 86_400_000);
-  if (days <= 0) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  if (days === 1) return 'Yesterday';
-  return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+  return section === 'Today' || section === 'Yesterday'
+    ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: 'numeric', month: 'short' });
 }
 
 export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
   const insets = useSafeAreaInsets();
   const { status } = useAuth();
-  const backend = useMemo(() => getBackend(), []);
-  const [sessions, setSessions] = useState<ChatSession[] | null>(null);
-  const [error, setError] = useState(false);
+  const sessionsQuery = useSessions();
+  // A failed refresh keeps the list already shown (the cache holds it); it is not an empty history.
+  const sessions = sessionsQuery.data ?? null;
+  const error = sessionsQuery.isError;
+  const load = sessionsQuery.refetch;
+  const { mutate: deleteSession } = useDeleteSession();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(false);
-    try {
-      const list = await backend.listSessions();
-      // Newest first by last activity, then creation.
-      list.sort((a, b) => Date.parse(b.updated_at ?? b.created_at ?? '') - Date.parse(a.updated_at ?? a.created_at ?? '') || 0);
-      setSessions(list);
-    } catch {
-      // Keep any list already shown; a failed refresh is not an empty history.
-      setError(true);
-    }
-  }, [backend]);
+  const sections = useMemo(() => groupSessions(sessions ?? []), [sessions]);
 
-  useEffect(() => {
-    if (status === 'signedIn') void load();
-  }, [load, status]);
-
+  // Delete is a long-press (and an accessibility action), not a button on every
+  // row: a destructive action should never be the loudest thing on the screen.
   const remove = useCallback(
     (s: ChatSession) => {
       Alert.alert('Delete this chat?', s.title || 'Untitled chat', [
@@ -50,23 +42,16 @@ export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await backend.deleteSession(s.id);
-              setSessions(prev => prev?.filter(x => x.id !== s.id) ?? prev);
-            } catch {
-              Alert.alert("Couldn't delete the chat", 'Check your connection and try again.');
-            }
-          },
+          // Leaves the list at once; useDeleteSession puts it back if the server refuses.
+          onPress: () =>
+            deleteSession(s.id, {
+              onError: () => Alert.alert("Couldn't delete the chat", 'Check your connection and try again.'),
+            }),
         },
       ]);
     },
-    [backend],
+    [deleteSession],
   );
-
-  const open = (id: string) => {
-    navigation.navigate('Chat', { sessionId: id });
-  };
 
   if (status !== 'signedIn') {
     return (
@@ -76,6 +61,22 @@ export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
       </View>
     );
   }
+
+  const header = (
+    <View style={styles.headerBlock}>
+      <Pressable
+        onPress={() => navigation.popTo('Chat', { fresh: Date.now() })}
+        accessibilityRole="button"
+        accessibilityLabel="Start a new chat"
+        style={({ pressed }) => [styles.newChat, shineGlow, pressed && { opacity: 0.9 }]}>
+        <Shine radius={radii.md} />
+        <Icon name="plus" size={20} color={colors.onPrimary} />
+        <Text style={styles.newChatText}>New chat</Text>
+      </Pressable>
+      {error && sessions ? <Text style={styles.warn}>Couldn't refresh. Showing what we have.</Text> : null}
+      {sessions && sessions.length > 0 ? <Text style={styles.tip}>Long-press a chat to delete it</Text> : null}
+    </View>
+  );
 
   return (
     <View style={styles.root}>
@@ -89,14 +90,17 @@ export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
           <Button label="Try again" variant="secondary" onPress={() => void load()} />
         </View>
       ) : (
-        <FlatList
-          data={sessions}
+        <SectionList
+          sections={sections}
           keyExtractor={s => s.id}
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + spacing.xl }]}
+          ListHeaderComponent={header}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               tintColor={colors.primary}
+              colors={[colors.primary]}
               onRefresh={async () => {
                 setRefreshing(true);
                 await load();
@@ -104,35 +108,38 @@ export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
               }}
             />
           }
-          ListHeaderComponent={
-            error ? <Text style={styles.warn}>Couldn't refresh. Showing what we have.</Text> : undefined
-          }
+          renderSectionHeader={({ section }) => <Text style={styles.section}>{section.title}</Text>}
           ListEmptyComponent={
-            <View style={styles.center}>
-              <Text style={styles.title}>No chat history yet</Text>
-              <Text style={styles.muted}>Start a conversation to see it here.</Text>
+            <View style={styles.empty}>
+              <Text style={styles.title}>No chats yet</Text>
+              <Text style={styles.muted}>Your questions and answers will be saved here.</Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <View style={styles.row}>
-              <Pressable
-                onPress={() => open(item.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Open chat ${item.title || 'Untitled chat'}`}
-                style={({ pressed }) => [styles.main, pressed && { backgroundColor: colors.surfaceHover }]}>
-                <Text style={styles.rowTitle} numberOfLines={2}>
-                  {item.title || 'Untitled chat'}
-                </Text>
-                <Text style={styles.when}>{when(item.updated_at ?? item.created_at)}</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => remove(item)}
-                accessibilityRole="button"
-                accessibilityLabel={`Delete chat ${item.title || 'Untitled chat'}`}
-                style={styles.del}>
-                <Text style={styles.delText}>Delete</Text>
-              </Pressable>
-            </View>
+          renderItem={({ item, section, index }) => (
+            <Pressable
+              onPress={() => navigation.popTo('Chat', { sessionId: item.id })}
+              onLongPress={() => remove(item)}
+              delayLongPress={350}
+              accessibilityRole="button"
+              accessibilityLabel={item.title || 'Untitled chat'}
+              accessibilityHint="Opens the chat. Long-press to delete."
+              accessibilityActions={[{ name: 'delete', label: 'Delete chat' }]}
+              onAccessibilityAction={e => {
+                if (e.nativeEvent.actionName === 'delete') remove(item);
+              }}
+              style={({ pressed }) => [
+                styles.row,
+                index === 0 && styles.rowFirst,
+                index === section.data.length - 1 && styles.rowLast,
+                pressed && styles.rowPressed,
+              ]}>
+              <View style={styles.dot} />
+              <Text style={styles.rowTitle} numberOfLines={1}>
+                {item.title || 'Untitled chat'}
+              </Text>
+              <Text style={styles.when}>{when(item, section.title)}</Text>
+              <Icon name="chevron" size={16} color={colors.borderStrong} />
+            </Pressable>
           )}
         />
       )}
@@ -142,23 +149,33 @@ export function HistoryScreen({ navigation }: ScreenProps<'History'>) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
-  list: { padding: spacing.lg, gap: spacing.sm, flexGrow: 1 },
+  list: { paddingHorizontal: spacing.lg, flexGrow: 1 },
+  headerBlock: { gap: spacing.sm, paddingTop: spacing.md, paddingBottom: spacing.xs },
+  newChat: { minHeight: MIN_TOUCH + 4, borderRadius: radii.md, backgroundColor: colors.primary, flexDirection: 'row', gap: spacing.sm, alignItems: 'center', justifyContent: 'center' },
+  newChatText: { ...type.body, fontFamily: fonts.bold, color: colors.onPrimary },
+  tip: { ...type.eyebrow, fontSize: 10, textAlign: 'center' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, padding: spacing.xl, backgroundColor: colors.background },
-  title: { ...type.body, fontWeight: '700' },
+  empty: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.xxl },
+  title: { ...type.body, fontFamily: fonts.bold },
   muted: { ...type.small, color: colors.textTertiary, textAlign: 'center' },
-  warn: { ...type.small, color: colors.danger, marginBottom: spacing.sm },
+  warn: { ...type.small, color: colors.danger },
+  section: { ...type.eyebrow, marginTop: spacing.xl, marginBottom: spacing.sm, marginLeft: spacing.xs },
   row: {
+    minHeight: 56,
     flexDirection: 'row',
-    alignItems: 'stretch',
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
     backgroundColor: colors.surface,
-    overflow: 'hidden',
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  main: { flex: 1, minHeight: 60, padding: spacing.md, gap: 2, justifyContent: 'center' },
-  rowTitle: { ...type.body, fontSize: 15, lineHeight: 21 },
-  when: { ...type.eyebrow },
-  del: { minWidth: MIN_TOUCH + 16, alignItems: 'center', justifyContent: 'center', borderLeftWidth: 1, borderLeftColor: colors.border },
-  delText: { ...type.small, color: colors.danger },
+  rowFirst: { borderTopWidth: 1, borderTopLeftRadius: radii.lg, borderTopRightRadius: radii.lg },
+  rowLast: { borderBottomWidth: 1, borderBottomLeftRadius: radii.lg, borderBottomRightRadius: radii.lg },
+  rowPressed: { backgroundColor: colors.surfaceHover },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
+  rowTitle: { ...type.body, fontSize: 15, flex: 1 },
+  when: { fontFamily: fonts.mono, fontSize: 11, color: colors.textTertiary },
 });

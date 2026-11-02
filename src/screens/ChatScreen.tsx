@@ -1,18 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getBackend } from '../api';
-import type { Entitlements } from '../api/schemas';
 import { useAuth } from '../auth/AuthContext';
 import { useChat } from '../chat/useChat';
+import { AccountSheet } from '../components/AccountSheet';
 import { Button } from '../components/Button';
-import { GuestBanner, OfflineBanner, QuotaCard, useIsOffline } from '../components/Banners';
+import { OfflineBanner, QuotaCard, useIsOffline } from '../components/Banners';
 import { Composer } from '../components/Composer';
 import { EmptyChat } from '../components/EmptyChat';
 import { Header } from '../components/Header';
+import { UpgradeModal } from '../components/UpgradeModal';
 import { MessageItem } from '../components/MessageItem';
 import type { ScreenProps } from '../navigation/types';
-import { colors, spacing, type } from '../theme/tokens';
+import { msUntil } from '../lib/countdown';
+import { useEntitlements, useInvalidate } from '../state/queries';
+import { colors, spacing, type, fonts } from '../theme/tokens';
 
 export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   const insets = useSafeAreaInsets();
@@ -21,13 +24,15 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   const chat = useChat({ backend });
   const offline = useIsOffline();
   const [draft, setDraft] = useState('');
-  const [guestBannerHidden, setGuestBannerHidden] = useState(false);
-  const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [limitOpen, setLimitOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
   const signedIn = status === 'signedIn';
+  const { data: entitlements = null } = useEntitlements();
+  const invalidate = useInvalidate();
 
   // Open a chat picked in History, or start a fresh one.
-  const { sessionId: routeSession, fresh } = route.params ?? {};
+  const { sessionId: routeSession, fresh, send: pendingSend } = route.params ?? {};
   useEffect(() => {
     if (routeSession) void chat.openSession(routeSession);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -48,51 +53,63 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
       lastUser.current = userId;
       chat.clear();
       setDraft('');
-      setEntitlements(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  const refreshEntitlements = useCallback(() => {
-    if (!signedIn) return;
-    backend
-      .getEntitlements()
-      .then(setEntitlements)
-      .catch(() => {});
-  }, [backend, signedIn]);
-  useEffect(refreshEntitlements, [refreshEntitlements]);
+  // Entitlements are shared (see state/queries); this screen only says when they may have changed.
+  const refreshEntitlements = useCallback(() => void invalidate.entitlements(), [invalidate]);
+  useEffect(() => {
+    if (accountOpen) refreshEntitlements();
+  }, [accountOpen, refreshEntitlements]);
+  // Back from Pricing after paying: the header and usage chip pick up the new plan.
+  useEffect(() => navigation.addListener('focus', refreshEntitlements), [navigation, refreshEntitlements]);
 
   const submit = useCallback(
     async (text: string) => {
       if (!signedIn) {
-        // Guests browse; sending needs an account. The draft stays in the box.
-        navigation.navigate('SignIn');
+        // Guests browse; sending needs an account. The question travels with them
+        // and is sent the moment they are signed in (see the `send` effect below).
+        if (text.trim()) navigation.navigate('SignIn', { prompt: text.trim() });
+        else navigation.navigate('SignIn');
+        return;
+      }
+      // Already out of free questions for today: say so now, with the question kept, rather than after a round trip.
+      const allowance = entitlements?.quota;
+      if (allowance && !allowance.unlimited && allowance.remaining <= 0 && (msUntil(allowance.resetAt, Date.now()) ?? 1) > 0) {
+        setDraft(text);
+        setLimitOpen(true);
         return;
       }
       setDraft('');
       const result = await chat.send(text);
       if (!result.ok && result.restoreText) setDraft(result.restoreText);
+      if (!result.ok && result.failure?.code === 'QUOTA_EXCEEDED') setLimitOpen(true);
       if (!result.ok && result.failure?.code === 'UNAUTHENTICATED') navigation.navigate('SignIn');
+      // A message uses up allowance and creates or moves a chat in History.
       refreshEntitlements();
+      void invalidate.sessions();
     },
-    [chat, navigation, refreshEntitlements, signedIn],
+    [chat, entitlements, invalidate, navigation, refreshEntitlements, signedIn],
   );
 
   const onSend = useCallback(() => void submit(draft), [draft, submit]);
+  const onPrompt = useCallback((t: string) => void submit(t), [submit]);
 
-  const confirmSignOut = useCallback(() => {
-    Alert.alert(user?.email ?? user?.phone ?? 'Account', undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign out',
-        style: 'destructive',
-        onPress: () => {
-          chat.clear();
-          void signOut();
-        },
-      },
-    ]);
-  }, [chat, signOut, user]);
+  // Back from sign-in with the question a guest asked: answer it now, once.
+  // Declared after the account-change effect above, so that one clears first.
+  useEffect(() => {
+    if (!pendingSend || !signedIn) return;
+    navigation.setParams({ send: undefined });
+    chat.newChat();
+    void submit(pendingSend);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSend, signedIn]);
+
+  const doSignOut = useCallback(() => {
+    chat.clear();
+    void signOut();
+  }, [chat, signOut]);
 
   // Newest first, so an inverted list keeps the latest at the bottom and leaves
   // the reader where they are when older text is being read.
@@ -105,28 +122,39 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
     }
   }, [lastId, chat.messages]);
 
+  const q = entitlements?.quota;
+  const metered = signedIn && q && !q.unlimited;
   const caption = !signedIn
-    ? 'FREE FOREVER · SIGN UP TO SEND'
-    : entitlements?.quota && !entitlements.quota.unlimited
-      ? `${entitlements.quota.remaining} FREE MESSAGE${entitlements.quota.remaining === 1 ? '' : 'S'} LEFT TODAY`
+    ? 'FREE FOREVER · NO CARD'
+    : metered
+      ? `${q.remaining} OF ${q.limit} FREE LEFT TODAY`
+      : undefined;
+  const captionTone = metered && q.remaining <= 1 ? 'warn' : 'normal';
+  const captionAction = !signedIn
+    ? { label: 'Sign up', onPress: () => navigation.navigate('SignIn') }
+    : metered
+      ? { label: 'Upgrade', onPress: () => navigation.navigate('Pricing') }
       : undefined;
 
   const empty = chat.messages.length === 0;
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
+    // The bottom inset lives here, outside the KeyboardAvoidingView, so the KAV ends at the top of the
+    // navigation bar and only lifts by however far the keyboard actually rises above it. Padding the
+    // composer for it instead counted the bar twice: a 24dp jump on focus with a hardware or floating
+    // keyboard, and a matching gap above the soft keyboard.
+    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <Header
         signedIn={signedIn}
+        identity={user?.email ?? user?.phone ?? undefined}
+        plan={entitlements?.plan}
         onHistory={() => navigation.navigate('History')}
         onNewChat={() => navigation.setParams({ sessionId: undefined, fresh: Date.now() })}
         onLogIn={() => navigation.navigate('SignIn')}
-        onSignUp={() => navigation.navigate('SignIn')}
-        onAccount={confirmSignOut}
+        onAccount={() => setAccountOpen(true)}
+        onPricing={() => navigation.navigate('Pricing')}
       />
       {offline ? <OfflineBanner /> : null}
-      {!signedIn && !guestBannerHidden ? (
-        <GuestBanner onSignUp={() => navigation.navigate('SignIn')} onDismiss={() => setGuestBannerHidden(true)} />
-      ) : null}
       {missingConfig.length > 0 ? (
         <View style={styles.config} accessibilityRole="alert">
           <Text style={styles.configTitle}>Backend not configured</Text>
@@ -160,7 +188,7 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
               data={data}
               keyExtractor={m => m.id}
               renderItem={({ item }) => (
-                <MessageItem message={item} statusText={chat.statusText} onRetry={id => void chat.retry(id)} />
+                <MessageItem message={item} statusText={chat.statusText} onRetry={id => void chat.retry(id)} onPrompt={onPrompt} />
               )}
               contentContainerStyle={styles.list}
               keyboardShouldPersistTaps="handled"
@@ -172,8 +200,8 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
           )}
         </View>
 
-        {chat.quota ? <QuotaCard quota={chat.quota} /> : null}
-        <View style={{ paddingBottom: Math.max(insets.bottom, spacing.sm) }}>
+        {chat.quota ? <QuotaCard quota={chat.quota} onSeePlans={() => navigation.navigate('Pricing')} /> : null}
+        <View style={insets.bottom > 0 ? undefined : styles.composerGap}>
           <Composer
             value={draft}
             onChangeText={setDraft}
@@ -181,9 +209,35 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
             onStop={chat.stop}
             isSending={chat.isSending}
             caption={caption}
+            captionTone={captionTone}
+            captionAction={captionAction}
+            placeholder={signedIn ? 'Ask anything about markets…' : 'Sign in free to ask anything'}
           />
         </View>
       </KeyboardAvoidingView>
+
+      <UpgradeModal
+        visible={limitOpen}
+        used={chat.quota?.used ?? q?.used ?? 0}
+        limit={chat.quota?.limit ?? q?.limit ?? 0}
+        resetAt={chat.quota?.resetAt ?? q?.resetAt ?? null}
+        hasDraft={draft.trim().length > 0}
+        onClose={() => setLimitOpen(false)}
+        onSeePlans={() => {
+          setLimitOpen(false);
+          navigation.navigate('Pricing');
+        }}
+        onReset={refreshEntitlements}
+      />
+      <AccountSheet
+        visible={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        identity={user?.email ?? user?.phone ?? 'Your account'}
+        entitlements={entitlements}
+        onPricing={() => navigation.navigate('Pricing')}
+        onHistory={() => navigation.navigate('History')}
+        onSignOut={doSignOut}
+      />
     </View>
   );
 }
@@ -192,9 +246,11 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   flex: { flex: 1 },
   list: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  /** Breathing room under the composer on devices with no bottom inset (no home indicator or nav bar). */
+  composerGap: { paddingBottom: spacing.sm },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
   muted: { ...type.small, color: colors.textTertiary },
   config: { margin: spacing.lg, padding: spacing.md, borderRadius: 12, backgroundColor: colors.dangerBg, gap: 4 },
-  configTitle: { ...type.small, color: colors.danger, fontWeight: '700' },
+  configTitle: { ...type.small, color: colors.danger, fontFamily: fonts.bold },
   configBody: { ...type.small, color: colors.danger },
 });

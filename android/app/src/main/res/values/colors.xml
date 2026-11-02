@@ -1,0 +1,5 @@
+<resources>
+    <!-- Kwala dark background, shared by the launch window and the animated splash. -->
+    <color name="splashscreen_background">#060706</color>
+    <color name="ic_launcher_background">#060706</color>
+</resources>

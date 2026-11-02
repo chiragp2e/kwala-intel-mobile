@@ -37,14 +37,24 @@ export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as cons
 export const radii = { sm: 8, md: 12, lg: 16, xl: 24, pill: 999 } as const;
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
-const serif = Platform.select({ ios: 'Georgia', default: 'serif' });
-const sans = Platform.select({ ios: 'System', default: 'sans-serif' });
 
-export const fonts = { sans, mono, serif } as const;
+/**
+ * Bricolage Grotesque, one registered family per weight (React Native picks a
+ * font by family name, not by fontWeight, for custom fonts). If a font fails to
+ * load the unknown family name falls back to the system font, which is the
+ * "Bricolage Grotesque Fallback" behaviour.
+ */
+export const fonts = {
+  regular: 'BricolageGrotesque_400Regular',
+  medium: 'BricolageGrotesque_500Medium',
+  semibold: 'BricolageGrotesque_600SemiBold',
+  bold: 'BricolageGrotesque_700Bold',
+  mono,
+} as const;
 
 export const type = {
-  body: { fontFamily: sans, fontSize: 16, lineHeight: 24, color: colors.textPrimary },
-  small: { fontFamily: sans, fontSize: 14, lineHeight: 20, color: colors.textSecondary },
+  body: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 24, color: colors.textPrimary },
+  small: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20, color: colors.textSecondary },
   eyebrow: {
     fontFamily: mono,
     fontSize: 11,
@@ -52,8 +62,8 @@ export const type = {
     textTransform: 'uppercase' as const,
     color: colors.textTertiary,
   },
-  heroSerif: {
-    fontFamily: serif,
+  hero: {
+    fontFamily: fonts.semibold,
     fontSize: 32,
     lineHeight: 38,
     color: colors.textPrimary,

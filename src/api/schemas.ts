@@ -85,3 +85,53 @@ export function parseEntitlements(raw: unknown): Entitlements | null {
           },
   };
 }
+
+const TaxSchema = z.object({
+  total_minor: z.number(),
+  base_minor: z.number(),
+  tax_minor: z.number(),
+  rate_bp: z.number(),
+});
+
+/** One purchasable plan from GET /billing/plans. Amounts are integer paise. */
+export const PlanViewSchema = z.object({
+  plan_code: z.string().min(1),
+  plan: z.enum(['pro', 'ultra']).nullish().transform(v => v ?? undefined),
+  billing_interval: z.enum(['monthly', 'annual']),
+  currency: z.string().default('INR'),
+  amount_minor: z.number().int().nonnegative(),
+  display_name: z.string().default(''),
+  tax: TaxSchema.nullish().transform(v => v ?? undefined),
+});
+export type PlanView = z.infer<typeof PlanViewSchema>;
+
+const unwrapData = (raw: unknown) => (raw && typeof raw === 'object' && 'data' in raw ? (raw as { data: unknown }).data : raw);
+
+/** POST /billing/checkout-intents and POST /billing/subscriptions both answer with this. */
+export const CheckoutIntentSchema = z.object({
+  intent_id: z.string().min(1),
+  /** The backend's Razorpay key id (publishable). Never the secret. */
+  provider_key_id: z.string().nullish(),
+  provider_subscription_id: z.string().nullish(),
+  short_url: z.string().url().nullish(),
+});
+export type CheckoutIntent = z.infer<typeof CheckoutIntentSchema>;
+
+/** GET /billing/subscription: the caller's own subscription. */
+export const SubscriptionSchema = z.object({
+  status: z.string().default('none'), // activating | active | failed | none
+  plan: z.string().default('free'),
+  plan_code: z.string().nullish(),
+  provider_subscription_id: z.string().nullish(),
+  short_url: z.string().nullish(),
+});
+export type Subscription = z.infer<typeof SubscriptionSchema>;
+
+export function parseCheckoutIntent(raw: unknown): CheckoutIntent | null {
+  const r = CheckoutIntentSchema.safeParse(unwrapData(raw));
+  return r.success ? r.data : null;
+}
+export function parseSubscription(raw: unknown): Subscription | null {
+  const r = SubscriptionSchema.safeParse(unwrapData(raw));
+  return r.success ? r.data : null;
+}

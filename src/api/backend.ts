@@ -1,4 +1,4 @@
-import type { ChatSession, Entitlements, StoredMessage } from './schemas';
+import type { ChatSession, CheckoutIntent, Entitlements, PlanView, StoredMessage, Subscription } from './schemas';
 import type { ChatEvent } from './sse';
 
 /**
@@ -12,6 +12,20 @@ export interface ChatBackend {
   getMessages(sessionId: string): Promise<StoredMessage[]>;
   deleteSession(sessionId: string): Promise<void>;
   getEntitlements(): Promise<Entitlements | null>;
+  /** The price list, GET /billing/plans. Identical for every caller. */
+  getPlans(): Promise<PlanView[]>;
+  /** Signed in: an intent bound to this account for one plan code. */
+  createCheckoutIntent(planCode: string): Promise<CheckoutIntent>;
+  /** Registers the subscription with the payment provider. Carries the hosted checkout URL when the server sends it. */
+  startSubscription(intentId: string): Promise<CheckoutIntent>;
+  /** The caller's own subscription, for watching a checkout land. */
+  getSubscription(): Promise<Subscription | null>;
+  /**
+   * Hands the in-app checkout's success callback to the server, which checks
+   * the signature and activates without waiting for the webhook. Entitlement
+   * still comes from the provider's own state, so this grants nothing alone.
+   */
+  verifyCheckout(args: { paymentId: string; subscriptionId: string; signature: string }): Promise<Subscription | null>;
   /**
    * Sends one user turn and reports the streamed answer through `onEvent`.
    * Resolves when the stream ends. Throws ChatError on a refusal or failure.

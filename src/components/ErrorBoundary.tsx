@@ -34,6 +34,6 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, gap: spacing.lg },
-  title: { ...type.heroSerif, fontSize: 26, textAlign: 'center' },
+  title: { ...type.hero, fontSize: 26, textAlign: 'center' },
   body: { ...type.small, textAlign: 'center' },
 });

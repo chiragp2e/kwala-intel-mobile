@@ -31,6 +31,7 @@ const KEYS = [
   'SUPABASE_ANON_KEY',
   'WEB_BASE_URL',
   'USE_MOCK_BACKEND',
+  'RAZORPAY_KEY_ID',
 ];
 const out = {
   APP_ENV: appEnv,

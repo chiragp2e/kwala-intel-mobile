@@ -10,6 +10,13 @@ Session (access + refresh token) is stored in Keychain / Keystore, chunked (`src
 ## Go API (`API_BASE_URL`)
 - `GET /auth/me/context` -> `{ data: { billing:{plan}, quota:{limit,used,remaining,resets_at,unlimited} } }`. Used for the "N free messages left" caption. Plans: `free | pro | ultra`; unknown means free.
 
+- `GET /billing/plans` -> `{ data: [ {plan_code, plan, billing_interval, amount_minor, tax{...}} ] }`
+- `POST /billing/checkout-intents` body `{ plan_code, surface:"mobile_app" }` (signed in) -> `{ data: { intent_id, provider_key_id, ... } }`
+- `POST /billing/subscriptions` body `{ intent_id }` -> `{ data: { intent_id, provider_key_id, provider_subscription_id, short_url? } }` (`short_url` added on branch `feat/checkout-intent-short-url`; older servers: read it from `GET /billing/subscription`)
+- In-app checkout: `react-native-razorpay` opens with `{ key, subscription_id }` (never an amount). The key is `RAZORPAY_KEY_ID` from the build env, else `provider_key_id`; if both are set and differ the app uses the hosted `short_url` instead.
+- `POST /billing/checkout/verify` body `{ provider_payment_id, provider_subscription_id, signature }` (the sheet's `razorpay_*` success fields) -> `{ data: <same shape as GET /billing/subscription> }`. Activates without waiting for the webhook; a bad signature is `400`, and the app keeps polling either way.
+- `GET /billing/subscription` -> `{ data: { status, plan, plan_code, provider_subscription_id, short_url } }`; `409 ALREADY_SUBSCRIBED` is shown as the server's message
+
 ## Chat service (`AI_API_BASE_URL`)
 - `POST /api/sessions` body `{ id }` (client-generated UUID, idempotent) -> `{ id, title, created_at, updated_at }`
 - `GET /api/sessions` -> `[ {id,title,created_at,updated_at} ]` (no pagination in the web app, none here)

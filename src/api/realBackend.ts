@@ -5,6 +5,9 @@ import { ChatError, classifyChatResponse, networkFailure, streamFailure } from '
 import { getAuthBridge, requestJson } from './http';
 import {
   ChatSessionSchema,
+  parseCheckoutIntent,
+  parseSubscription,
+  PlanViewSchema,
   StoredMessageSchema,
   parseEntitlements,
   parseList,
@@ -45,6 +48,42 @@ export function createRealBackend(): ChatBackend {
 
     async getEntitlements() {
       return parseEntitlements(await requestJson(`${api}/auth/me/context`));
+    },
+
+    async getPlans() {
+      const raw = await requestJson(`${api}/billing/plans`);
+      const rows = raw && typeof raw === 'object' && 'data' in raw ? (raw as { data: unknown }).data : raw;
+      return parseList(PlanViewSchema, rows);
+    },
+
+    async createCheckoutIntent(planCode) {
+      const intent = parseCheckoutIntent(
+        await requestJson(`${api}/billing/checkout-intents`, { method: 'POST', body: { plan_code: planCode, surface: 'mobile_app' } }),
+      );
+      if (!intent) throw new ChatError(streamFailure('Checkout could not be started. Please try again.'));
+      return intent;
+    },
+
+    async startSubscription(intentId) {
+      const intent = parseCheckoutIntent(
+        await requestJson(`${api}/billing/subscriptions`, { method: 'POST', body: { intent_id: intentId }, timeoutMs: 30_000 }),
+      );
+      if (!intent) throw new ChatError(streamFailure('Checkout could not be started. Please try again.'));
+      return intent;
+    },
+
+    async getSubscription() {
+      return parseSubscription(await requestJson(`${api}/billing/subscription`));
+    },
+
+    async verifyCheckout({ paymentId, subscriptionId, signature }) {
+      return parseSubscription(
+        await requestJson(`${api}/billing/checkout/verify`, {
+          method: 'POST',
+          body: { provider_payment_id: paymentId, provider_subscription_id: subscriptionId, signature },
+          timeoutMs: 30_000,
+        }),
+      );
     },
 
     async streamChat({ sessionId, message, signal, onEvent }) {

@@ -1,9 +1,9 @@
 import NetInfo from '@react-native-community/netinfo';
 import React, { useEffect, useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { QuotaInfo } from '../api/errors';
-import { env } from '../config/env';
-import { MIN_TOUCH, colors, radii, spacing, type } from '../theme/tokens';
+import { Shine, shineGlow } from './Shine';
+import { MIN_TOUCH, colors, radii, spacing, type, fonts } from '../theme/tokens';
 
 export function useIsOffline(): boolean {
   const [offline, setOffline] = useState(false);
@@ -19,34 +19,11 @@ export function OfflineBanner() {
   );
 }
 
-export function GuestBanner({ onSignUp, onDismiss }: { onSignUp: () => void; onDismiss: () => void }) {
-  return (
-    <View style={styles.guest}>
-      <Text style={styles.guestText} numberOfLines={3}>
-        <Text style={styles.bold}>You're browsing as a guest. </Text>
-        Sign up for free to chat with our AI Market Analyst.
-      </Text>
-      <Pressable onPress={onSignUp} accessibilityRole="button" accessibilityLabel="Sign up for free" style={styles.cta}>
-        <Text style={styles.ctaText}>Sign up for free</Text>
-      </Pressable>
-      <Pressable
-        onPress={onDismiss}
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss"
-        hitSlop={8}
-        style={styles.close}>
-        <Text style={styles.closeText}>×</Text>
-      </Pressable>
-    </View>
-  );
-}
-
 /**
- * The free daily limit was reached. Payments are not part of this app, so the
- * card points to the web app for plans. (Store policy on linking out to
- * purchase is a release check; see docs/RELEASE_CHECKLIST.md.)
+ * The free daily limit was reached. The card opens the in-app pricing screen;
+ * checkout itself happens on the web app (see docs/RELEASE_CHECKLIST.md).
  */
-export function QuotaCard({ quota }: { quota: QuotaInfo | null }) {
+export function QuotaCard({ quota, onSeePlans }: { quota: QuotaInfo | null; onSeePlans: () => void }) {
   const reset = quota?.resetAt ? new Date(quota.resetAt) : null;
   const resetLabel =
     reset && !Number.isNaN(reset.getTime())
@@ -61,11 +38,12 @@ export function QuotaCard({ quota }: { quota: QuotaInfo | null }) {
         </Text>
       ) : null}
       <Pressable
-        onPress={() => void Linking.openURL(`${env.webBaseUrl}/pricing`).catch(() => {})}
-        accessibilityRole="link"
-        accessibilityLabel="See plans on the Kwala website"
-        style={styles.cta}>
-        <Text style={styles.ctaText}>See plans on the web</Text>
+        onPress={onSeePlans}
+        accessibilityRole="button"
+        accessibilityLabel="See plans and pricing"
+        style={[styles.cta, shineGlow]}>
+        <Shine radius={radii.sm} />
+        <Text style={styles.ctaText}>See plans</Text>
       </Pressable>
     </View>
   );
@@ -74,19 +52,6 @@ export function QuotaCard({ quota }: { quota: QuotaInfo | null }) {
 const styles = StyleSheet.create({
   bar: { paddingVertical: spacing.sm, paddingHorizontal: spacing.lg },
   text: { ...type.small },
-  guest: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  guestText: { ...type.small, flex: 1, color: colors.textSecondary },
-  bold: { fontWeight: '700', color: colors.textPrimary },
   cta: {
     minHeight: MIN_TOUCH - 8,
     paddingHorizontal: spacing.md,
@@ -95,9 +60,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ctaText: { ...type.small, color: colors.onPrimary, fontWeight: '600' },
-  close: { width: MIN_TOUCH - 8, height: MIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: colors.textTertiary, fontSize: 24 },
+  ctaText: { ...type.small, color: colors.onPrimary, fontFamily: fonts.semibold },
   quota: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
@@ -109,6 +72,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     alignItems: 'flex-start',
   },
-  quotaTitle: { ...type.body, fontWeight: '700' },
+  quotaTitle: { ...type.body, fontFamily: fonts.bold },
   quotaBody: { ...type.small },
 });

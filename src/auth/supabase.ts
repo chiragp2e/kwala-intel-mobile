@@ -19,6 +19,8 @@ export function getSupabase(): SupabaseClient {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // Google sign-in returns an auth code that is exchanged with a PKCE verifier kept on the device.
+      flowType: 'pkce',
     },
   });
   // Token refresh timers must not run while the app is suspended.

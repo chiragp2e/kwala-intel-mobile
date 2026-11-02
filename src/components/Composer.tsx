@@ -1,6 +1,8 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { MIN_TOUCH, colors, fonts, radii, spacing, type } from '../theme/tokens';
+import { Icon } from './Icon';
+import { Shine, shineGlow } from './Shine';
 
 interface Props {
   value: string;
@@ -9,82 +11,194 @@ interface Props {
   onStop: () => void;
   isSending: boolean;
   placeholder?: string;
+  /** Small status line under the box, e.g. "2 free messages left today". */
   caption?: string;
+  /** "warn" turns the chip amber (nearly out of free messages). */
+  captionTone?: 'normal' | 'warn';
+  /** Makes the chip a button, with this call to action after the text (e.g. "Upgrade"). */
+  captionAction?: { label: string; onPress: () => void };
 }
 
-export function Composer({ value, onChangeText, onSend, onStop, isSending, placeholder, caption }: Props) {
+const MAX_LENGTH = 4000;
+const SHOW_COUNT_AT = 3400;
+const BUTTON = 44;
+
+/**
+ * The chat input. A rounded card that comes alive on focus (green border plus a
+ * soft halo), grows with the text up to six lines, and carries a round send
+ * button that wakes up (scales in and picks up the shine) once there is
+ * something to send. While an answer is streaming it becomes a stop button.
+ */
+export function Composer({ value, onChangeText, onSend, onStop, isSending, placeholder, caption, captionTone = 'normal', captionAction }: Props) {
+  const [focused, setFocused] = useState(false);
+  const focus = useRef(new Animated.Value(0)).current;
+  const ready = useRef(new Animated.Value(0)).current;
+  const press = useRef(new Animated.Value(1)).current;
   const canSend = value.trim().length > 0 && !isSending;
+
+  useEffect(() => {
+    Animated.timing(focus, { toValue: focused ? 1 : 0, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
+  }, [focus, focused]);
+  useEffect(() => {
+    Animated.spring(ready, { toValue: canSend ? 1 : 0, friction: 6, tension: 140, useNativeDriver: true }).start();
+  }, [canSend, ready]);
+
+  const borderColor = focus.interpolate({ inputRange: [0, 1], outputRange: [colors.borderStrong, colors.primary] });
+  const haloOpacity = focus.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+  const scale = ready.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] });
+
+  const pressIn = () => Animated.spring(press, { toValue: 0.92, useNativeDriver: true, speed: 40, bounciness: 0 }).start();
+  const pressOut = () => Animated.spring(press, { toValue: 1, useNativeDriver: true, speed: 20, bounciness: 8 }).start();
+
+  const showCount = value.length >= SHOW_COUNT_AT;
+
   return (
     <View style={styles.wrap}>
-      <View style={styles.box}>
-        <TextInput
-          style={styles.input}
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder ?? 'Ask anything about markets…'}
-          placeholderTextColor={colors.textTertiary}
-          multiline
-          maxLength={4000}
-          accessibilityLabel="Message"
-          // Allow OS text scaling; the box grows with the text up to a cap.
-          allowFontScaling
-          underlineColorAndroid="transparent"
-          selectionColor={colors.primaryNeon}
-          returnKeyType="default"
-        />
-        {isSending ? (
-          <Pressable
-            onPress={onStop}
-            accessibilityRole="button"
-            accessibilityLabel="Stop generating"
-            style={[styles.btn, styles.stop]}>
-            <View style={styles.stopSquare} />
-          </Pressable>
-        ) : (
-          <Pressable
-            onPress={onSend}
-            disabled={!canSend}
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            accessibilityState={{ disabled: !canSend }}
-            style={[styles.btn, canSend ? styles.sendOn : styles.sendOff]}>
-            <Text style={styles.arrow}>↑</Text>
-          </Pressable>
-        )}
+      <View>
+        {/* Halo: a wider, fainter ring behind the card that fades in on focus. */}
+        <Animated.View pointerEvents="none" style={[styles.halo, { opacity: haloOpacity }]} />
+        <Animated.View style={[styles.card, { borderColor }]}>
+          <TextInput
+            style={styles.input}
+            value={value}
+            onChangeText={onChangeText}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            placeholder={placeholder ?? 'Ask anything about markets…'}
+            placeholderTextColor={colors.textTertiary}
+            multiline
+            maxLength={MAX_LENGTH}
+            accessibilityLabel="Message"
+            allowFontScaling
+            underlineColorAndroid="transparent"
+            selectionColor={colors.primaryNeon}
+            cursorColor={colors.primaryNeon}
+            textAlignVertical="center"
+          />
+          <View style={styles.action}>
+            {isSending ? (
+              <Pressable
+                onPress={onStop}
+                accessibilityRole="button"
+                accessibilityLabel="Stop generating"
+                style={({ pressed }) => [styles.stop, pressed && { opacity: 0.8 }]}>
+                <View style={styles.stopSquare} />
+              </Pressable>
+            ) : (
+              <Animated.View style={{ transform: [{ scale: Animated.multiply(scale, press) }] }}>
+                <Pressable
+                  onPress={onSend}
+                  onPressIn={pressIn}
+                  onPressOut={pressOut}
+                  disabled={!canSend}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityState={{ disabled: !canSend }}
+                  style={[styles.send, canSend ? [styles.sendOn, shineGlow] : styles.sendOff]}>
+                  {canSend ? <Shine radius={BUTTON / 2} /> : null}
+                  <Icon name="arrow-up" size={22} color={canSend ? colors.onPrimary : 'rgba(255,255,255,0.4)'} />
+                </Pressable>
+              </Animated.View>
+            )}
+          </View>
+        </Animated.View>
       </View>
-      {caption ? <Text style={styles.caption}>{caption}</Text> : null}
+
+      <View style={styles.meta}>
+        {caption ? (
+          <Pressable
+            onPress={captionAction?.onPress}
+            disabled={!captionAction}
+            accessibilityRole={captionAction ? 'button' : 'text'}
+            accessibilityLabel={captionAction ? `${caption}. ${captionAction.label}` : caption}
+            hitSlop={8}
+            style={({ pressed }) => [styles.chip, captionTone === 'warn' && styles.chipWarn, pressed && { opacity: 0.75 }]}>
+            <View style={[styles.dot, captionTone === 'warn' && { backgroundColor: colors.danger }]} />
+            <Text style={[styles.chipText, captionTone === 'warn' && { color: colors.danger }]}>{caption}</Text>
+            {captionAction ? <Text style={styles.chipAction}>{captionAction.label} →</Text> : null}
+          </Pressable>
+        ) : null}
+        {showCount ? (
+          <Text style={[styles.count, value.length >= MAX_LENGTH && { color: colors.danger }]}>
+            {value.length}/{MAX_LENGTH}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
 
+const CARD_RADIUS = 26;
+
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.sm, gap: spacing.sm },
-  box: {
+  wrap: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xs, gap: spacing.sm },
+  halo: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    right: -4,
+    bottom: -4,
+    borderRadius: CARD_RADIUS + 4,
+    borderWidth: 4,
+    borderColor: 'rgba(74, 166, 100, 0.18)',
+  },
+  card: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     backgroundColor: colors.surface,
-    borderRadius: radii.xl,
+    borderRadius: CARD_RADIUS,
     borderWidth: 1.5,
-    borderColor: colors.primary,
-    paddingLeft: spacing.lg,
+    paddingLeft: spacing.lg + 2,
     paddingRight: spacing.sm,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
+    // Depth: a faint lift so the box floats over the transcript.
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    elevation: 6,
   },
   input: {
     flex: 1,
     ...type.body,
-    minHeight: MIN_TOUCH - 4,
-    maxHeight: 140,
-    paddingTop: 8,
-    paddingBottom: 8,
+    minHeight: BUTTON,
+    maxHeight: 144, // about six lines, then it scrolls
+    paddingTop: 10,
+    paddingBottom: 10,
     color: colors.textPrimary,
   },
-  btn: { width: MIN_TOUCH - 4, height: MIN_TOUCH - 4, borderRadius: radii.pill, alignItems: 'center', justifyContent: 'center' },
+  action: { height: BUTTON, justifyContent: 'center' },
+  send: { width: BUTTON, height: BUTTON, borderRadius: BUTTON / 2, alignItems: 'center', justifyContent: 'center' },
   sendOn: { backgroundColor: colors.primary },
-  sendOff: { backgroundColor: '#17301f' },
-  stop: { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.borderStrong },
-  stopSquare: { width: 14, height: 14, borderRadius: 3, backgroundColor: colors.textPrimary },
-  arrow: { color: colors.onPrimary, fontSize: 22, fontWeight: '700', lineHeight: 26 },
-  caption: { ...type.eyebrow, fontFamily: fonts.mono, textAlign: 'center' },
+  sendOff: { backgroundColor: '#16281c' },
+  stop: {
+    width: BUTTON,
+    height: BUTTON,
+    borderRadius: BUTTON / 2,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopSquare: { width: 14, height: 14, borderRadius: 3, backgroundColor: colors.primaryNeon },
+  meta: { alignItems: 'center', justifyContent: 'center', minHeight: MIN_TOUCH / 2 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primaryNeon },
+  chipText: { ...type.eyebrow, fontSize: 10.5 },
+  chipWarn: { borderColor: 'rgba(245,158,11,0.45)', backgroundColor: colors.dangerBg },
+  chipAction: { fontFamily: fonts.bold, fontSize: 12, color: colors.primaryNeon, marginLeft: 2 },
+  count: { position: 'absolute', right: spacing.xs, fontFamily: fonts.mono, fontSize: 11, color: colors.textTertiary },
 });

@@ -18,6 +18,11 @@ function fakeBackend(stream: Stream, history: ChatBackend['getMessages'] = async
     getMessages: history,
     deleteSession: async () => {},
     getEntitlements: async () => null,
+    getPlans: async () => [],
+    createCheckoutIntent: async () => ({ intent_id: 'i' }),
+    startSubscription: async () => ({ intent_id: 'i' }),
+    getSubscription: async () => null,
+    verifyCheckout: async () => null,
     streamChat: stream,
   };
 }

@@ -1,27 +1,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-
-    <application
-      android:name=".MainApplication"
-      android:label="@string/app_name"
-      android:icon="@mipmap/ic_launcher"
-      android:roundIcon="@mipmap/ic_launcher_round"
-      android:allowBackup="false"
-      android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="${usesCleartextTraffic}"
-      android:supportsRtl="true">
-      <activity
-        android:name=".MainActivity"
-        android:label="@string/app_name"
-        android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
-        android:launchMode="singleTask"
-        android:windowSoftInputMode="adjustResize"
-        android:exported="true">
-        <intent-filter>
-            <action android:name="android.intent.action.MAIN" />
-            <category android:name="android.intent.category.LAUNCHER" />
-        </intent-filter>
-      </activity>
-    </application>
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:usesCleartextTraffic="${usesCleartextTraffic}" android:supportsRtl="true">
+    <activity android:name=".MainActivity" android:label="@string/app_name" android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+      <!-- Google sign-in returns here: <scheme>://auth-callback?code=... -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="${appScheme}" android:host="auth-callback"/>
+      </intent-filter>
+    </activity>
+    <meta-data android:name="expo.modules.updates.ENABLED" android:value="true"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="https://u.expo.dev/REPLACE_WITH_EAS_PROJECT_ID"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE" android:value="-----BEGIN CERTIFICATE-----&#xD;&#xA;MIIC2TCCAcGgAwIBAgIJO6R031OUC/X3MA0GCSqGSIb3DQEBCwUAMBYxFDASBgNV&#xD;&#xA;BAMTC0t3YWxhIEludGVsMB4XDTI2MTAyODEzNDMxN1oXDTM2MTAyODEzNDMxN1ow&#xD;&#xA;FjEUMBIGA1UEAxMLS3dhbGEgSW50ZWwwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAw&#xD;&#xA;ggEKAoIBAQDhHbzPTh0y8VjxCwNEisQUqCwtBFseJwEBMTyazB+PQyScY9BOT/bO&#xD;&#xA;rJACjDMeBV8aj41PMT7aOlqi3ednD7PLqrOd+uKULekq+HxHdJ2F5OosTpC3aT+4&#xD;&#xA;uyFKKH8ozg66Ozr1gS4mzUv7NaM56k9nV2OqZOdauQAb2KLid72XuHrCP9L7Ry79&#xD;&#xA;Tvd/ti45myBwgnU5/lOJW64obZqmOSbNSSR2IyArlxZOD9PNJ6d4GDdfCxCkNSkD&#xD;&#xA;uYJts7tJ07PVoDgYjpXfKaN704kYLrWlj4xML95kUBL6IhRtB3i7szDmqWNCnOQ2&#xD;&#xA;thnlrn8sNrzqHlG6L8X6fICZn/EDQHGhAgMBAAGjKjAoMA4GA1UdDwEB/wQEAwIH&#xD;&#xA;gDAWBgNVHSUBAf8EDDAKBggrBgEFBQcDAzANBgkqhkiG9w0BAQsFAAOCAQEAi66M&#xD;&#xA;RUBtOeGiy+0U7ebMiotg+rdSKjS5NJee3gpsVNtT1ZtP5V3iMY4ZgSmivhxDQwLf&#xD;&#xA;Kt507YTPh2KQvtKxDPXDAFDqZboteQkX2pai8FrPRbOGNFQ+HXoKgluE5e1fhe1r&#xD;&#xA;mJnwsPteKA1Lb4IEBOVa0Y60y70MklmPcZu8PdKf5x0r4S3AUEokmKi8QWHaC7b2&#xD;&#xA;u8BLgMNoRzkALG6pNp5q31rloWIIVDZb5leAtgL9WXGV7mni5DPK3INIejgD9xJy&#xD;&#xA;l2qp5YRUMMaMQeUSh2FeDoWqbQFIYr9IA7BiS6kwOS+JAkP2Z5rfjxLdcj7gk4qW&#xD;&#xA;ystmVUh5UyrebsVrgg==&#xD;&#xA;-----END CERTIFICATE-----&#xD;&#xA;"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_METADATA" android:value="{&quot;keyid&quot;:&quot;main&quot;,&quot;alg&quot;:&quot;rsa-v1_5-sha256&quot;}"/>
+    <meta-data android:name="expo.modules.updates.UPDATES_CONFIGURATION_REQUEST_HEADERS_KEY" android:value="{&quot;expo-channel-name&quot;:&quot;${expoChannel}&quot;}"/>
+    <meta-data android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="@string/expo_runtime_version"/>
+  </application>
 </manifest>

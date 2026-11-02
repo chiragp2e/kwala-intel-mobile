@@ -1,3 +1,4 @@
+require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
 # Resolve react_native_pods.rb with node to allow for hoisting
 require Pod::Executable.execute_command('node', ['-p',
   'require.resolve(
@@ -15,7 +16,24 @@ if linkage != nil
 end
 
 target 'KwalaMobile' do
-  config = use_native_modules!
+  use_expo_modules!
+
+  if ENV['EXPO_USE_COMMUNITY_AUTOLINKING'] == '1'
+    config_command = ['node', '-e', "process.argv=['', '', 'config'];require('@react-native-community/cli').run()"];
+  else
+    config_command = [
+      'node',
+      '--no-warnings',
+      '--eval',
+      'require(require.resolve(\'expo-modules-autolinking\', { paths: [require.resolve(\'expo/package.json\')] }))(process.argv.slice(1))',
+      'react-native-config',
+      '--json',
+      '--platform',
+      'ios'
+    ]
+  end
+
+  config = use_native_modules!(config_command)
 
   use_react_native!(
     :path => config[:reactNativePath],
@@ -31,5 +49,36 @@ target 'KwalaMobile' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Xcode 26+ only supports iOS deployment targets 15.0 and up, but a few pods (mostly their
+    # resource bundles) still declare 12.x. Raise those to the app's own target.
+    installer.pods_project.targets.each do |pod_target|
+      pod_target.build_configurations.each do |build_config|
+        current = build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current.nil? || current.to_f < 15.0
+          build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+        end
+
+        defs = build_config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+        defs = [defs] if defs.is_a?(String)
+        build_config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs + ['FMT_NO_CONSTEVAL=1']
+      end
+    end
+
+    # fmt 11.0.2's consteval format-string checks don't compile with Apple clang in Xcode 26+, and the header
+    # sets FMT_USE_CONSTEVAL itself (a -D is overwritten). Give it an opt-out, switched on above. The checks
+    # are compile-time validation only, so turning them off changes no behaviour.
+    fmt_base = File.join(installer.sandbox.root.to_s, 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base)
+      source = File.read(fmt_base)
+      patched = source.sub(
+        "#if !defined(__cpp_lib_is_constant_evaluated)\n#  define FMT_USE_CONSTEVAL 0",
+        "#if defined(FMT_NO_CONSTEVAL) || !defined(__cpp_lib_is_constant_evaluated)\n#  define FMT_USE_CONSTEVAL 0"
+      )
+      if patched != source
+        File.chmod(0644, fmt_base)
+        File.write(fmt_base, patched)
+      end
+    end
   end
 end

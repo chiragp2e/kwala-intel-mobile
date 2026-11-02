@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
-import { MIN_TOUCH, colors, radii, spacing, type } from '../theme/tokens';
+import { MIN_TOUCH, colors, radii, spacing, type, fonts } from '../theme/tokens';
+import { Shine, shineGlow } from './Shine';
 
 interface Props {
   label: string;
@@ -24,12 +25,13 @@ export function Button({ label, onPress, variant = 'primary', loading, disabled,
       accessibilityState={{ disabled: !!inactive, busy: !!loading }}
       style={({ pressed }) => [
         styles.base,
-        variant === 'primary' && { backgroundColor: pressed ? colors.primaryPressed : colors.primary },
+        variant === 'primary' && [{ backgroundColor: pressed ? colors.primaryPressed : colors.primary }, !inactive && shineGlow],
         variant === 'secondary' && styles.secondary,
         variant === 'ghost' && styles.ghost,
         inactive && styles.inactive,
         style,
       ]}>
+      {variant === 'primary' ? <Shine radius={radii.md} still={!!inactive} /> : null}
       {loading ? (
         <ActivityIndicator color={colors.onPrimary} />
       ) : (
@@ -50,5 +52,5 @@ const styles = StyleSheet.create({
   secondary: { borderWidth: 1, borderColor: colors.border, backgroundColor: 'transparent' },
   ghost: { backgroundColor: 'transparent' },
   inactive: { opacity: 0.5 },
-  label: { ...type.body, fontWeight: '600', color: colors.onPrimary },
+  label: { ...type.body, fontFamily: fonts.semibold, color: colors.onPrimary },
 });

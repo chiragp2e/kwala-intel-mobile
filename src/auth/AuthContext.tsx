@@ -1,7 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import * as WebBrowser from 'expo-web-browser';
 import { setAuthBridge } from '../api/http';
 import { env, missingBackendConfig } from '../config/env';
+import { requestAppleCredential } from './apple';
+import { parseOAuthCallback, oauthRedirectUri } from './oauth';
 import { getSupabase } from './supabase';
 
 export interface AuthUser {
@@ -22,6 +25,10 @@ interface AuthValue {
   verifyEmailCode(email: string, code: string): Promise<Result>;
   sendPhoneCode(e164: string): Promise<Result>;
   verifyPhoneCode(e164: string, code: string): Promise<Result>;
+  /** Opens Google in the system browser. `error` is null when the user simply closes it. */
+  signInWithGoogle(): Promise<Result>;
+  /** Apple's native sign-in sheet; iOS only. `error` is null when the user cancels it. */
+  signInWithApple(): Promise<Result>;
   signOut(): Promise<void>;
 }
 
@@ -35,8 +42,16 @@ function toUser(session: Session | null): AuthUser | null {
 }
 
 /** Plain-language errors; never the raw provider message. */
-function friendly(error: { message?: string; status?: number } | null | undefined): string | null {
+function friendly(
+  error: { message?: string; status?: number; name?: string } | null | undefined,
+  where: string,
+): string | null {
   if (!error) return null;
+  // Diagnostic only — never user-facing. Lets a release-build failure be
+  // read back via `adb logcat` instead of leaving no trace at all, since
+  // reportError() deliberately drops the message (see lib/diagnostics.ts)
+  // and no crash-reporting vendor is wired up yet.
+  console.error(`[auth:${where}]`, { name: error.name, status: error.status, message: error.message });
   const msg = (error.message ?? '').toLowerCase();
   if (error.status === 429 || msg.includes('rate limit') || msg.includes('too many')) {
     return 'Too many attempts. Please wait a minute and try again.';
@@ -94,7 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: email.trim().toLowerCase(),
       options: { shouldCreateUser: true },
     });
-    return { error: friendly(error) };
+    return { error: friendly(error, 'sendEmailCode') };
   }, []);
 
   const verifyEmailCode = useCallback(async (email: string, code: string): Promise<Result> => {
@@ -103,7 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token: code.trim(),
       type: 'email',
     });
-    return { error: friendly(error) };
+    return { error: friendly(error, 'verifyEmailCode') };
   }, []);
 
   const sendPhoneCode = useCallback(async (e164: string): Promise<Result> => {
@@ -111,12 +126,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       phone: e164,
       options: { shouldCreateUser: true },
     });
-    return { error: friendly(error) };
+    return { error: friendly(error, 'sendPhoneCode') };
   }, []);
 
   const verifyPhoneCode = useCallback(async (e164: string, code: string): Promise<Result> => {
     const { error } = await getSupabase().auth.verifyOtp({ phone: e164, token: code.trim(), type: 'sms' });
-    return { error: friendly(error) };
+    return { error: friendly(error, 'verifyPhoneCode') };
+  }, []);
+
+  const signInWithGoogle = useCallback(async (): Promise<Result> => {
+    const supabase = getSupabase();
+    const redirectTo = oauthRedirectUri();
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error || !data?.url) return { error: 'Could not start Google sign-in. Please try again.' };
+
+    let result: WebBrowser.WebBrowserAuthSessionResult;
+    try {
+      result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    } catch {
+      return { error: 'Could not open the browser. Please try again.' };
+    }
+    // Closing the browser is a choice, not a failure.
+    if (result.type !== 'success') return { error: null };
+
+    const callback = parseOAuthCallback(result.url);
+    if (callback.kind === 'error') return { error: 'Google sign-in was not completed. Please try again.' };
+    if (callback.kind === 'none') return { error: 'Google sign-in did not return to the app. Please try again.' };
+    const exchanged = await supabase.auth.exchangeCodeForSession(callback.code);
+    return { error: exchanged.error ? 'Google sign-in failed. Please try again.' : null };
+  }, []);
+
+  const signInWithApple = useCallback(async (): Promise<Result> => {
+    const apple = await requestAppleCredential();
+    // Cancelling the sheet is a choice, not a failure.
+    if (apple.kind === 'cancelled') return { error: null };
+    if (apple.kind === 'error') return { error: 'Could not start Apple sign-in. Please try again.' };
+
+    const supabase = getSupabase();
+    const { error } = await supabase.auth.signInWithIdToken({
+      provider: 'apple',
+      token: apple.identityToken,
+      nonce: apple.nonce,
+    });
+    if (error) {
+      // Diagnostic only, as in friendly(): most likely the Apple provider or this bundle ID is not set up in Supabase.
+      console.error('[auth:signInWithApple]', { name: error.name, status: error.status, message: error.message });
+      return { error: 'Apple sign-in failed. Please try again.' };
+    }
+    // Best effort: a failed save must not undo a good sign-in.
+    if (apple.fullName) {
+      void supabase.auth.updateUser({ data: { full_name: apple.fullName } }).catch(() => {});
+    }
+    return { error: null };
   }, []);
 
   const signOut = useCallback(async () => {
@@ -125,8 +189,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [mock]);
 
   const value = useMemo<AuthValue>(
-    () => ({ status, user, missingConfig, sendEmailCode, verifyEmailCode, sendPhoneCode, verifyPhoneCode, signOut }),
-    [status, user, missingConfig, sendEmailCode, verifyEmailCode, sendPhoneCode, verifyPhoneCode, signOut],
+    () => ({
+      status,
+      user,
+      missingConfig,
+      sendEmailCode,
+      verifyEmailCode,
+      sendPhoneCode,
+      verifyPhoneCode,
+      signInWithGoogle,
+      signInWithApple,
+      signOut,
+    }),
+    [status, user, missingConfig, sendEmailCode, verifyEmailCode, sendPhoneCode, verifyPhoneCode, signInWithGoogle, signInWithApple, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
