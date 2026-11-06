@@ -9,7 +9,7 @@ chat service); it has no backend of its own.
   *Why not SDK 58 / RN 0.88 (newest):* SDK 56+ builds a Swift 6.2 package and needs **Xcode 26**; the Mac this was built on has
   Xcode 16.4. SDK 55 builds with Xcode 16.4. Upgrade to the newest SDK once Xcode 26 is installed (and Apple requires Xcode 26 for
   App Store uploads anyway). Upgrade steps: bump `expo` and run `npx expo install --fix`, re-run `install-expo-modules`, `pod install`.
-- Dark theme only (the supplied designs are dark). Font: Bricolage Grotesque (`@expo-google-fonts/bricolage-grotesque`, loaded with `expo-font`); if it fails to load the system font is used. Mono captions use the platform monospace font.
+- Dark theme only (the supplied designs are dark). Fonts match the web app: Geist for UI text, JetBrains Mono for numbers and labels, Newsreader for the empty-chat headline (`@expo-google-fonts/*`, loaded with `expo-font` and also bundled in `android/app/src/main/assets/fonts`); if one fails to load the system font is used.
 
 ## Setup
 ```
@@ -62,8 +62,9 @@ npm run check    # tsc --noEmit, eslint, jest (what CI runs, plus a JS bundle bu
 src/api         HTTP + SSE transport, zod schemas, real backend, dev-only mock
 src/auth        Supabase client, secure (Keychain/Keystore) session storage, AuthContext
 src/chat        transcript reducer, session provisioner, useChat (send / stream / retry / reconcile)
-src/components  Header, Composer, MessageItem, Markdown, banners, error boundary
-src/screens     Chat, History, Pricing, SignIn
+src/components  Header, HistoryDrawer, Composer, MessageItem, ActivityFeed, Markdown, ConfirmDialog, banners
+src/screens     Chat, Pricing, Profile, About, Notifications, SignIn
+modules/        kwala-background: native keep-alive for a streaming answer (iOS background task, Android foreground service)
 src/theme       design tokens
 docs/           API_CONTRACT, OTA_RUNBOOK, RELEASE_CHECKLIST
 ```
@@ -74,7 +75,15 @@ docs/           API_CONTRACT, OTA_RUNBOOK, RELEASE_CHECKLIST
   (daily limit, signed out) removes the bubble and puts the text back in the composer.
 - **Streaming** uses `expo/fetch` (RN's built-in `fetch` cannot stream). Stop keeps the partial answer.
 - **Scrolling**: the list is inverted, so new text grows at the bottom and doesn't drag a reader away from older messages.
-- **Background / foreground**: when the app returns to the foreground it re-reads the chat from the server, so an answer that finished while away appears.
+- **Background / foreground**: while an answer streams the app holds it open in the background (`modules/kwala-background`: a
+  short foreground service with a "Finishing your answer…" notification on Android, which otherwise cuts a backgrounded app's
+  network at once; a ~30s background task on iOS). If the stream still drops, the app shows "Reconnecting…" and, back in the
+  foreground, polls the session for up to two minutes for the finished answer before offering *Try again*. The AI service
+  does not currently finish or store a turn whose client disconnected, so on iOS an absence longer than ~30s still ends in *Try again*.
+- **Voice**: hold the mic to talk and let go to send, or tap to start and tap again to stop and edit. The clip (mono AAC, max 58s)
+  goes to the AI service's `POST /api/transcribe`, as on the web.
+- **Notifications**: the bell reads the in-app inbox (`/notifications` on the Go API) on open, on foreground and every 5 minutes.
+  Native push is not wired up yet.
 - **Logout** ends the session and clears chat state held in memory; no message content is persisted on the device.
 - **Pricing** loads live plans from `/billing/plans` (prices, GST split, annual saving). Checkout runs in Razorpay's native sheet (`react-native-razorpay`, key from `RAZORPAY_KEY_ID`, test key on staging), then `/billing/checkout/verify` and a poll of `/billing/subscription`. A binary without the native module, or a key that doesn't match the backend's, falls back to Razorpay's hosted page in an in-app browser tab.
 - **Green buttons** share one shine effect (`src/components/Shine.tsx`): static gloss plus a periodic sweep, off when Reduce Motion is on.

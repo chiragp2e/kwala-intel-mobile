@@ -14,3 +14,18 @@ jest.mock('@react-native-community/netinfo', () => ({
   __esModule: true,
   default: { addEventListener: () => () => {} },
 }));
+jest.mock('./src/lib/backgroundTask', () => ({ keepAliveInBackground: () => () => {} }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
+jest.mock('expo-audio', () => ({
+  AudioQuality: { MEDIUM: 64 },
+  IOSOutputFormat: { MPEG4AAC: 'aac ' },
+  requestRecordingPermissionsAsync: jest.fn(async () => ({ granted: true, canAskAgain: true })),
+  setAudioModeAsync: jest.fn(async () => {}),
+  useAudioRecorder: () => ({
+    uri: 'file:///clip.m4a',
+    prepareToRecordAsync: jest.fn(async () => {}),
+    record: jest.fn(),
+    stop: jest.fn(async () => {}),
+    getStatus: () => ({ metering: -20, durationMillis: 0 }),
+  }),
+}));

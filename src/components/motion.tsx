@@ -15,11 +15,9 @@ import Animated, {
   useSharedValue,
   withDelay,
   withRepeat,
-  withSequence,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { colors } from '../theme/tokens';
 
 /** True when the OS asks for less motion. Everything here falls back to a plain, instant state. */
 export function useReduceMotion(): boolean {
@@ -102,30 +100,30 @@ export function PressScale({ style, to = 0.97, onPressIn, onPressOut, children, 
   );
 }
 
+/**
+ * One dot of the web's `typing-dot` keyframes (kwala-intel-fe/src/index.css):
+ * over 1.4s it rises 4px and brightens from 0.3 to 1 at 30%, back down by 60%,
+ * then rests. The three dots start 0.2s apart.
+ */
 function Dot({ index, color, animate }: { index: number; color: string; animate: boolean }) {
-  const v = useSharedValue(0.35);
+  const t = useSharedValue(0);
   useEffect(() => {
     if (!animate) return;
-    const ease = Easing.inOut(Easing.quad);
-    v.value = withRepeat(
-      withSequence(
-        withDelay(index * 160, withTiming(1, { duration: 380, easing: ease })),
-        withTiming(0.35, { duration: 380, easing: ease }),
-        withDelay((2 - index) * 160, withTiming(0.35, { duration: 0 })),
-      ),
-      -1,
-    );
-    return () => cancelAnimation(v);
-  }, [v, index, animate]);
-  const animated = useAnimatedStyle(() => ({
-    opacity: v.value,
-    transform: [{ scale: 0.8 + ((v.value - 0.35) / 0.65) * 0.35 }],
-  }));
+    t.value = withDelay(index * 200, withRepeat(withTiming(1, { duration: 1400, easing: Easing.linear }), -1));
+    return () => cancelAnimation(t);
+  }, [t, index, animate]);
+  const animated = useAnimatedStyle(() => {
+    // 0 at rest, 1 at the peak (30%), eased on each side like CSS `ease`.
+    const p = t.value;
+    const up = p < 0.3 ? p / 0.3 : p < 0.6 ? 1 - (p - 0.3) / 0.3 : 0;
+    const k = up * up * (3 - 2 * up);
+    return { opacity: 0.3 + 0.7 * k, transform: [{ translateY: -4 * k }] };
+  });
   return <Animated.View style={[styles.dot, { backgroundColor: color }, animated]} />;
 }
 
-/** Three dots that pulse in turn: the "Kwala is writing" indicator. Static dots under reduced motion. */
-export function TypingDots({ color = colors.primary }: { color?: string }) {
+/** Three dots that rise in turn: the web's "Kwala is thinking" dots. Static under reduced motion. */
+export function TypingDots({ color = 'rgba(0,127,71,0.4)' }: { color?: string }) {
   const reduce = useReduceMotion();
   return (
     <View style={styles.dots} accessibilityElementsHidden importantForAccessibility="no">
@@ -137,6 +135,6 @@ export function TypingDots({ color = colors.primary }: { color?: string }) {
 }
 
 const styles = StyleSheet.create({
-  dots: { flexDirection: 'row', alignItems: 'center', gap: 5, height: 16 },
-  dot: { width: 7, height: 7, borderRadius: 3.5 },
+  dots: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 16 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
 });

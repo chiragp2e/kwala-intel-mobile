@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <application>
+    <!-- Holds a streaming chat answer while the app is in the background (see AnswerService). -->
+    <service
+      android:name="expo.modules.kwalabackground.AnswerService"
+      android:exported="false"
+      android:foregroundServiceType="shortService"/>
+  </application>
+</manifest>

@@ -10,10 +10,17 @@ describe('parseEventLine', () => {
       type: 'block',
       content: { type: 'prose', markdown: 'x' },
     });
+    expect(parseEventLine('data: {"type":"thinking","content":"Checking prices."}')).toEqual({ type: 'thinking', content: 'Checking prices.' });
+    expect(parseEventLine('data: {"type":"activity","content":{"id":"a1","state":"running","label":"Fetching BTC","group":"market"}}')).toEqual({
+      type: 'activity',
+      content: { id: 'a1', state: 'running', label: 'Fetching BTC', group: 'market' },
+    });
   });
 
   it('ignores unknown types, malformed JSON, comments and wrong content types', () => {
     expect(parseEventLine('data: {"type":"activity","content":{"id":1}}')).toBeNull();
+    expect(parseEventLine('data: {"type":"activity","content":{"id":"a","state":"queued","label":"x"}}')).toBeNull();
+    expect(parseEventLine('data: {"type":"chart","content":{}}')).toBeNull();
     expect(parseEventLine('data: {not json')).toBeNull();
     expect(parseEventLine(': keep-alive')).toBeNull();
     expect(parseEventLine('data: ')).toBeNull();

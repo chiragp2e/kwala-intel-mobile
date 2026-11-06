@@ -12,6 +12,10 @@ export interface Env {
   useMockBackend: boolean;
   /** Razorpay publishable key id for the in-app checkout. Empty means "use the key the server sends". */
   razorpayKeyId: string;
+  /** Google OAuth *Web* client id. The native Google sign-in asks for an ID token issued to it, and Supabase checks it. Empty: use the browser flow. */
+  googleWebClientId: string;
+  /** Google OAuth iOS client id (iOS only). */
+  googleIosClientId: string;
 }
 
 function appEnv(raw: string | undefined): AppEnv {
@@ -33,6 +37,8 @@ export function readEnv(source: Record<string, string | undefined>): Env {
     // whatever the env file says, so a release can't silently run on fake data.
     useMockBackend: env === 'development' && source.USE_MOCK_BACKEND === 'true',
     razorpayKeyId: razorpayKeyId(env, source.RAZORPAY_KEY_ID),
+    googleWebClientId: (source.GOOGLE_WEB_CLIENT_ID ?? '').trim(),
+    googleIosClientId: (source.GOOGLE_IOS_CLIENT_ID ?? '').trim(),
   };
 }
 

@@ -4,17 +4,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getBackend } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useChat } from '../chat/useChat';
-import { AccountSheet } from '../components/AccountSheet';
+import { useVoiceInput } from '../chat/useVoiceInput';
 import { Button } from '../components/Button';
 import { OfflineBanner, QuotaCard, useIsOffline } from '../components/Banners';
 import { Composer } from '../components/Composer';
 import { EmptyChat } from '../components/EmptyChat';
 import { Header } from '../components/Header';
+import { HistoryDrawer } from '../components/HistoryDrawer';
 import { UpgradeModal } from '../components/UpgradeModal';
 import { MessageItem } from '../components/MessageItem';
 import type { ScreenProps } from '../navigation/types';
 import { msUntil } from '../lib/countdown';
-import { useEntitlements, useInvalidate } from '../state/queries';
+import { unreadCount, useEntitlements, useInvalidate, useNotifications } from '../state/queries';
 import { colors, spacing, type, fonts } from '../theme/tokens';
 
 export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
@@ -24,11 +25,12 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   const chat = useChat({ backend });
   const offline = useIsOffline();
   const [draft, setDraft] = useState('');
-  const [accountOpen, setAccountOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
   const signedIn = status === 'signedIn';
   const { data: entitlements = null } = useEntitlements();
+  const { data: notifications } = useNotifications();
   const invalidate = useInvalidate();
 
   // Open a chat picked in History, or start a fresh one.
@@ -59,9 +61,6 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
 
   // Entitlements are shared (see state/queries); this screen only says when they may have changed.
   const refreshEntitlements = useCallback(() => void invalidate.entitlements(), [invalidate]);
-  useEffect(() => {
-    if (accountOpen) refreshEntitlements();
-  }, [accountOpen, refreshEntitlements]);
   // Back from Pricing after paying: the header and usage chip pick up the new plan.
   useEffect(() => navigation.addListener('focus', refreshEntitlements), [navigation, refreshEntitlements]);
 
@@ -94,6 +93,19 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   );
 
   const onSend = useCallback(() => void submit(draft), [draft, submit]);
+
+  // Dictation is added to whatever is typed, never replaces it. Hold-and-release sends it;
+  // a tap-to-stop leaves it in the box to edit. While an answer is streaming it always waits.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const voice = useVoiceInput({
+    onTranscript: (text, autoSend) => {
+      const typed = draftRef.current.trim();
+      const composed = typed ? `${typed} ${text}` : text;
+      if (autoSend && !chat.isSending) void submit(composed);
+      else setDraft(composed);
+    },
+  });
   const onPrompt = useCallback((t: string) => void submit(t), [submit]);
 
   // Back from sign-in with the question a guest asked: answer it now, once.
@@ -106,6 +118,8 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSend, signedIn]);
 
+  const startNewChat = useCallback(() => navigation.setParams({ sessionId: undefined, fresh: Date.now() }), [navigation]);
+
   const doSignOut = useCallback(() => {
     chat.clear();
     void signOut();
@@ -114,6 +128,12 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   // Newest first, so an inverted list keeps the latest at the bottom and leaves
   // the reader where they are when older text is being read.
   const data = useMemo(() => [...chat.messages].reverse(), [chat.messages]);
+  // The latest answer carries the turn's live state: status, the agent's steps, a reconnect.
+  const lastAnswerId = useMemo(() => [...chat.messages].reverse().find(m => m.role === 'assistant')?.id, [chat.messages]);
+  const feedKey = useMemo(
+    () => [chat.statusText, chat.activity, chat.thinking, chat.reconnecting],
+    [chat.statusText, chat.activity, chat.thinking, chat.reconnecting],
+  );
   const lastId = chat.messages[chat.messages.length - 1]?.id;
   useEffect(() => {
     // A new turn from this user scrolls to the latest. Streaming growth alone does not.
@@ -146,13 +166,13 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <Header
         signedIn={signedIn}
-        identity={user?.email ?? user?.phone ?? undefined}
         plan={entitlements?.plan}
-        onHistory={() => navigation.navigate('History')}
-        onNewChat={() => navigation.setParams({ sessionId: undefined, fresh: Date.now() })}
+        unread={signedIn ? unreadCount(notifications) : 0}
+        onMenu={() => setDrawerOpen(true)}
+        onNewChat={startNewChat}
         onLogIn={() => navigation.navigate('SignIn')}
-        onAccount={() => setAccountOpen(true)}
         onPricing={() => navigation.navigate('Pricing')}
+        onNotifications={() => navigation.navigate('Notifications')}
       />
       {offline ? <OfflineBanner /> : null}
       {missingConfig.length > 0 ? (
@@ -187,9 +207,22 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
               inverted
               data={data}
               keyExtractor={m => m.id}
-              renderItem={({ item }) => (
-                <MessageItem message={item} statusText={chat.statusText} onRetry={id => void chat.retry(id)} onPrompt={onPrompt} />
-              )}
+              extraData={feedKey}
+              renderItem={({ item }) =>
+                item.id === lastAnswerId ? (
+                  <MessageItem
+                    message={item}
+                    statusText={chat.statusText}
+                    onRetry={id => void chat.retry(id)}
+                    onPrompt={onPrompt}
+                    activity={chat.activity}
+                    thinking={chat.thinking}
+                    reconnecting={chat.reconnecting}
+                  />
+                ) : (
+                  <MessageItem message={item} statusText={null} onRetry={id => void chat.retry(id)} onPrompt={onPrompt} />
+                )
+              }
               contentContainerStyle={styles.list}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
@@ -211,6 +244,8 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
             caption={caption}
             captionTone={captionTone}
             captionAction={captionAction}
+            voice={signedIn ? voice : null}
+            onMicGated={() => navigation.navigate('SignIn')}
             placeholder={signedIn ? 'Ask anything about markets…' : 'Sign in free to ask anything'}
           />
         </View>
@@ -229,13 +264,18 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
         }}
         onReset={refreshEntitlements}
       />
-      <AccountSheet
-        visible={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        identity={user?.email ?? user?.phone ?? 'Your account'}
-        entitlements={entitlements}
+      <HistoryDrawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        activeSessionId={chat.sessionId}
+        onOpenSession={id => navigation.setParams({ sessionId: id, fresh: undefined })}
+        onNewChat={startNewChat}
+        onDeleted={id => {
+          if (id === chat.sessionId) startNewChat();
+        }}
+        onProfile={() => navigation.navigate('Profile')}
         onPricing={() => navigation.navigate('Pricing')}
-        onHistory={() => navigation.navigate('History')}
+        onSignIn={() => navigation.navigate('SignIn')}
         onSignOut={doSignOut}
       />
     </View>

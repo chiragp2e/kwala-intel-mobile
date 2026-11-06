@@ -28,7 +28,7 @@ export function getAuthBridge(): AuthBridge {
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   signal?: AbortSignal;
   timeoutMs?: number;

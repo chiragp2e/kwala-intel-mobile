@@ -125,6 +125,16 @@ export function networkFailure(): ChatFailure {
   };
 }
 
+/** The connection dropped while the app was in the background and the server had no finished answer to pick up. */
+export function interruptedFailure(): ChatFailure {
+  return {
+    code: 'NETWORK',
+    status: null,
+    message: 'The answer was interrupted while Kwala Intel was in the background. Try again.',
+    retryable: true,
+  };
+}
+
 export function streamFailure(detail?: string): ChatFailure {
   return { code: 'SERVER', status: null, message: detail || GENERIC_SERVER, retryable: true };
 }
