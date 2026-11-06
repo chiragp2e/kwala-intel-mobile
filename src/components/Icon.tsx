@@ -34,13 +34,31 @@ export type IconName =
   | 'tag'
   | 'alert-triangle'
   | 'info'
-  | 'user';
+  | 'user'
+  | 'microscope'
+  | 'credit-card';
 
 /**
  * Lucide's drawings (the set the web app uses), on a 24 grid. Drawn with
  * react-native-svg so they stay crisp at any size and match the web icons.
  */
 const LUCIDE: Partial<Record<IconName, (c: string) => React.ReactNode>> = {
+  'credit-card': c => (
+    <>
+      <Rect x={2} y={5} width={20} height={14} rx={2} stroke={c} />
+      <Line x1={2} y1={10} x2={22} y2={10} stroke={c} />
+    </>
+  ),
+  microscope: c => (
+    <>
+      <Path d="M6 18h8" stroke={c} />
+      <Path d="M3 22h18" stroke={c} />
+      <Path d="M14 22a7 7 0 1 0 0-14h-1" stroke={c} />
+      <Path d="M9 14h2" stroke={c} />
+      <Path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z" stroke={c} />
+      <Path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" stroke={c} />
+    </>
+  ),
   'panel-left': c => (
     <>
       <Rect x={3} y={3} width={18} height={18} rx={2} stroke={c} />

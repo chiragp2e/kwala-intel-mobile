@@ -3,12 +3,12 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { ClipPath, Circle, Defs, G, Line, Path, Polygon, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 import { Icon, type IconName } from '../../components/Icon';
 import { colors, fonts, radii } from '../../theme/tokens';
-import { compact, fmtPctLevel, formatValue, unitFormatter } from '../lib/format';
+import { compact, fmtNum, fmtPctLevel, formatValue, unitFormatter } from '../lib/format';
 import type { ChartOverlay, ChartSpec, Unit } from '../types';
 import { DOWN, ROLE_COLOR, SERIES_COLORS, UP, role } from '../roles';
 import { dateLabel, linear, niceTicks, num, toMs } from './scale';
 import { chartExportAvailable, shareChartImage } from './exportChart';
-import { useChartGestures } from './useChartGestures';
+import { useChartGestures, type ChartTouch } from './useChartGestures';
 import { FULL, isFull, nearestIndex, visibleRange, zoomAround, type Win } from './zoom';
 
 /** One hue, darkest at the top, so the order of the stages reads in the colour. */
@@ -20,12 +20,25 @@ const AXIS = colors.textTertiary;
 
 type Pt = [number, number];
 
-/** What the tooltip shows for a touch: where the crosshair goes and the values under it. */
+/** What a touch points at: the tooltip's text and the marks that show which part of the chart it is about. */
 interface Tip {
-  x: number;
+  /** A crosshair at this x (time and category axes). */
+  x?: number;
+  dashed?: boolean;
+  /** A shaded column behind the touched category. */
+  band?: { x: number; w: number };
+  /** A ring around the touched dot. */
+  ring?: { x: number; y: number; r: number };
+  /** The touched bar, slice or stage, for charts that light it up. */
+  index?: number;
+  /** Where the box goes: beside `at.x`, top at `at.y` (default: the top of the chart). */
+  at?: { x: number; y?: number };
   title: string;
   rows: { color: string; label: string; value: string; y?: number }[];
 }
+
+/** The tooltip box is about this tall: a title line and a line per row. */
+const tipHeight = (tip: Tip) => 26 + tip.rows.length * 19;
 
 function ActionButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
   return (
@@ -40,12 +53,26 @@ function ActionButton({ icon, label, onPress }: { icon: IconName; label: string;
   );
 }
 
-function TipOverlay({ tip, w }: { tip: Tip; w: number }) {
+function TipOverlay({ tip, w, h }: { tip: Tip; w: number; h: number }) {
+  const ax = tip.at?.x ?? tip.x ?? w / 2;
+  const right = ax > w / 2;
+  const room = Math.max(120, (right ? ax : w - ax) - 14);
+  const top = Math.max(4, Math.min(h - tipHeight(tip) - 4, tip.at?.y ?? 4));
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <View style={[s.cross, { left: tip.x - 0.5, top: PAD.t, height: H - PAD.t - PAD.b }]} />
-      {tip.rows.map((r, i) => (r.y === undefined ? null : <View key={i} style={[s.dot, { left: tip.x - 4.5, top: r.y - 4.5, backgroundColor: r.color }]} />))}
-      <View style={[s.tip, tip.x > w / 2 ? { right: w - tip.x + 10 } : { left: tip.x + 10 }]}>
+      <Svg width={w} height={h} style={StyleSheet.absoluteFill}>
+        {tip.band ? <Rect x={tip.band.x} y={PAD.t} width={tip.band.w} height={H - PAD.t - PAD.b} fill="rgba(148,163,184,0.14)" /> : null}
+        {tip.x !== undefined ? (
+          <Line x1={tip.x} x2={tip.x} y1={PAD.t} y2={H - PAD.b} stroke="rgba(203,213,225,0.6)" strokeWidth={1} strokeDasharray={tip.dashed ? '4,4' : undefined} />
+        ) : null}
+        {tip.ring ? <Circle cx={tip.ring.x} cy={tip.ring.y} r={tip.ring.r + 3} fill="none" stroke={colors.textPrimary} strokeWidth={1.5} /> : null}
+        {tip.x !== undefined
+          ? tip.rows.map((r, i) =>
+              r.y === undefined ? null : <Circle key={i} cx={tip.x} cy={r.y} r={4.5} fill={r.color} stroke={colors.surface} strokeWidth={1.5} />,
+            )
+          : null}
+      </Svg>
+      <View testID="chart-tip" style={[s.tip, { top, maxWidth: Math.min(260, room), minWidth: Math.min(150, room) }, right ? { right: w - ax + 10 } : { left: ax + 10 }]}>
         <Text style={s.tipTitle}>{tip.title}</Text>
         {tip.rows.map((r, i) => (
           <View key={i} style={s.tipRow}>
@@ -62,11 +89,13 @@ function TipOverlay({ tip, w }: { tip: Tip; w: number }) {
 }
 
 /**
- * The card every chart sits in: title, a download button, and, for charts that
- * have a time axis, zoom controls plus touch inspection. A touch shows a
- * crosshair and tooltip (`tip`), a pinch zooms and the +/- buttons do the same
- * for anyone who would rather tap. Downloading photographs the card as it is
- * now, zoom included, and opens the share sheet.
+ * The card every chart sits in: title, a download button, touch inspection,
+ * and, for charts that have a time axis, zoom controls. A touch shows what is
+ * under the finger, as hovering does on the web: a crosshair or highlight and
+ * a tooltip (`tip`), which stays for a moment after the finger lifts. A pinch
+ * zooms and the +/- buttons do the same for anyone who would rather tap.
+ * Downloading photographs the card as it is now, zoom included, and opens the
+ * share sheet.
  */
 function Frame({
   spec,
@@ -75,22 +104,27 @@ function Frame({
   zoomable = false,
   minSpan = 0.05,
   tip,
+  fixedHeight = true,
 }: {
   spec: ChartSpec;
-  children: (w: number, win: Win) => React.ReactNode;
+  /** Draws the chart; `active` is what the finger is on, for charts that highlight it. */
+  children: (w: number, win: Win, active: Tip | null) => React.ReactNode;
   legend?: React.ReactNode;
   zoomable?: boolean;
   minSpan?: number;
-  /** What to show at chart pixel `px`; leave out for charts with nothing to inspect. */
-  tip?: (w: number, win: Win, px: number) => Tip | null;
+  /** What a touch at chart pixel `at` points to, or null for nothing. */
+  tip: (w: number, win: Win, at: ChartTouch) => Tip | null;
+  /** Cartesian charts are H tall; pie and funnel take the height of what they draw. */
+  fixedHeight?: boolean;
 }) {
   const [w, setW] = useState(0);
+  const [h, setH] = useState(H);
   const [win, setWin] = useState<Win>(FULL);
   const [capturing, setCapturing] = useState(false);
   const cardRef = useRef<View>(null);
   const canExport = useMemo(chartExportAvailable, []);
   const g = useChartGestures({ width: w, left: PAD.l, right: PAD.r, win, setWin, minSpan, zoomable });
-  const shown = tip && w > 0 && g.scrub !== null && !capturing ? tip(w, win, g.scrub) : null;
+  const shown = w > 0 && g.scrub !== null && !capturing ? tip(w, win, g.scrub) : null;
   const zoomed = !isFull(win);
   const showActions = zoomable || canExport;
 
@@ -122,11 +156,11 @@ function Frame({
           ) : null}
         </View>
       ) : null}
-      <View ref={g.viewRef} onLayout={e => { setW(Math.floor(e.nativeEvent.layout.width)); g.measure(); }} style={s.fill} {...(tip ? g.handlers : {})}>
+      <View ref={g.viewRef} onLayout={e => { setW(Math.floor(e.nativeEvent.layout.width)); g.measure(); }} style={s.fill} {...g.handlers}>
         {w > 0 ? (
-          <View style={{ width: w, height: H }}>
-            {children(w, win)}
-            {shown ? <TipOverlay tip={shown} w={w} /> : null}
+          <View style={fixedHeight ? { width: w, height: H } : { width: w }} onLayout={e => setH(Math.floor(e.nativeEvent.layout.height))}>
+            {children(w, win, shown)}
+            {shown ? <TipOverlay tip={shown} w={w} h={fixedHeight ? H : h} /> : null}
           </View>
         ) : (
           <View style={{ height: H }} />
@@ -315,8 +349,9 @@ function LineChart({ spec }: { spec: ChartSpec }) {
     return { wx0, wx1, shown, ticks, x, y };
   };
 
-  const tip = (w: number, win: Win, px: number): Tip | null => {
+  const tip = (w: number, win: Win, at: ChartTouch): Tip | null => {
     const v = view(w, win);
+    const px = Math.min(w - PAD.r, Math.max(PAD.l, at.x));
     const t = v.wx0 + ((px - PAD.l) / Math.max(1, w - PAD.l - PAD.r)) * (v.wx1 - v.wx0);
     // Snap to the closest timestamp any series has, then read every series at it.
     let snap = series[0].xs[nearestIndex(series[0].xs, t)];
@@ -400,9 +435,9 @@ function CandleChart({ spec }: { spec: ChartSpec }) {
     return { shown, ticks, y, step, cx, n: shown.length, span: shown[shown.length - 1].t - shown[0].t };
   };
 
-  const tip = (w: number, win: Win, px: number): Tip | null => {
+  const tip = (w: number, win: Win, at: ChartTouch): Tip | null => {
     const v = view(w, win);
-    const i = Math.min(v.n - 1, Math.max(0, Math.floor((px - PAD.l) / v.step)));
+    const i = Math.min(v.n - 1, Math.max(0, Math.floor((at.x - PAD.l) / v.step)));
     const c = v.shown[i];
     const col = c.c >= c.o ? UP : DOWN;
     return {
@@ -467,19 +502,46 @@ interface Bar {
   color: string;
 }
 
-function BarsFrame({ spec, groups, legendNames, gap = 0.28, unit }: { spec: ChartSpec; groups: Bar[][]; legendNames?: string[]; gap?: number; unit?: string }) {
+interface BarsProps {
+  spec: ChartSpec;
+  groups: Bar[][];
+  legendNames?: string[];
+  gap?: number;
+  unit?: string;
+  /** The tooltip for category `i`: its rows, one per series. */
+  rowsAt: (i: number) => Tip['rows'];
+  /** The web's pointer: a dashed line for bars, a shaded column for histogram and waterfall. */
+  pointer?: 'line' | 'band';
+}
+
+function BarsFrame({ spec, groups, legendNames, gap = 0.28, unit, rowsAt, pointer = 'line' }: BarsProps) {
   const cats = groups[0]?.length ?? 0;
   if (!cats) return null;
+  const vals = groups.flat().flatMap(b => b.span);
+  const lo = Math.min(0, ...vals);
+  const hi = Math.max(0, ...vals);
+  const ticks = niceTicks(lo, hi * 1.05, 4);
+  const y = linear(Math.min(lo, ticks[0]), Math.max(hi, ticks[ticks.length - 1]), H - PAD.b, PAD.t);
+  const stepOf = (w: number) => (w - PAD.l - PAD.r) / cats;
+
+  const tip = (w: number, _win: Win, at: ChartTouch): Tip | null => {
+    const step = stepOf(w);
+    const i = Math.min(cats - 1, Math.max(0, Math.floor((at.x - PAD.l) / step)));
+    const cx = PAD.l + step * (i + 0.5);
+    return {
+      ...(pointer === 'band' ? { band: { x: PAD.l + step * i, w: step } } : { x: cx, dashed: true }),
+      index: i,
+      at: { x: cx },
+      title: groups[0][i].label,
+      rows: rowsAt(i),
+    };
+  };
+
   return (
-    <Frame spec={spec} legend={legendNames ? <Legend names={legendNames} colorsList={SERIES_COLORS} /> : undefined}>
+    <Frame spec={spec} tip={tip} legend={legendNames ? <Legend names={legendNames} colorsList={SERIES_COLORS} /> : undefined}>
       {w => {
-        const vals = groups.flat().flatMap(b => b.span);
-        const lo = Math.min(0, ...vals);
-        const hi = Math.max(0, ...vals);
-        const ticks = niceTicks(lo, hi * 1.05, 4);
-        const y = linear(Math.min(lo, ticks[0]), Math.max(hi, ticks[ticks.length - 1]), H - PAD.b, PAD.t);
         const inner = w - PAD.l - PAD.r;
-        const step = inner / cats;
+        const step = stepOf(w);
         const slot = step * (1 - gap);
         const bw = slot / groups.length;
         const every = Math.max(1, Math.ceil(cats / Math.max(2, Math.floor(inner / 46))));
@@ -510,6 +572,7 @@ function BarsFrame({ spec, groups, legendNames, gap = 0.28, unit }: { spec: Char
 
 function BarChart({ spec }: { spec: ChartSpec }) {
   const unit = spec.y_axis?.unit;
+  const fmt = unitFormatter(unit as Unit);
   const bars = spec.series.filter(sr => sr.type === 'bar' || sr.type === spec.chart_type);
   const cats = spec.x_axis?.categories ?? [];
   const groups = bars.map((sr, si) =>
@@ -518,7 +581,10 @@ function BarChart({ spec }: { spec: ChartSpec }) {
       return { label: cats[i] ?? String(i + 1), span: [0, Number.isFinite(n) ? n : 0] as [number, number], color: SERIES_COLORS[si % SERIES_COLORS.length] };
     }),
   );
-  return <BarsFrame spec={spec} groups={groups} legendNames={bars.map(b => b.name)} unit={unit} />;
+  // As on the web (trigger 'axis'): every series' value at the touched category.
+  const rowsAt = (i: number) =>
+    groups.flatMap((g, gi) => (g[i] ? [{ color: g[i].color, label: bars[gi].name || spec.y_axis?.label || 'Value', value: fmt(g[i].span[1]) }] : []));
+  return <BarsFrame spec={spec} groups={groups} legendNames={bars.map(b => b.name)} unit={unit} rowsAt={rowsAt} />;
 }
 
 function HistogramChart({ spec }: { spec: ChartSpec }) {
@@ -526,24 +592,29 @@ function HistogramChart({ spec }: { spec: ChartSpec }) {
     .map(p => (Array.isArray(p) ? ([num(p[0]), num(p[1])] as Pt) : null))
     .filter((p): p is Pt => !!p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
   const group = pts.map(p => ({ label: compact(p[0]), span: [0, p[1]] as [number, number], color: p[0] < 0 ? DOWN : UP }));
-  return <BarsFrame spec={spec} groups={[group]} gap={0.04} />;
+  const rowsAt = (i: number) => [{ color: group[i].color, label: spec.series[0]?.name || 'Count', value: fmtNum(pts[i][1]) }];
+  return <BarsFrame spec={spec} groups={[group]} gap={0.04} rowsAt={rowsAt} pointer="band" />;
 }
 
 function WaterfallChart({ spec }: { spec: ChartSpec }) {
   const unit = spec.y_axis?.unit;
+  const fmt = unitFormatter(unit as Unit);
   const items = ((spec.series[0]?.data ?? []) as unknown[]).filter((d): d is Record<string, unknown> => !!d && typeof d === 'object');
   let run = 0;
-  const group = items.map(it => {
+  const steps = items.map(it => {
     const v = num(it.value);
-    if (it.total) {
-      const t = { label: String(it.name ?? ''), span: [0, run] as [number, number], color: colors.accent };
-      return t;
-    }
+    if (it.total) return { bar: { label: String(it.name ?? ''), span: [0, run] as [number, number], color: colors.accent }, change: null, total: run };
     const from = run;
     run += Number.isFinite(v) ? v : 0;
-    return { label: String(it.name ?? ''), span: [from, run] as [number, number], color: v >= 0 ? UP : DOWN };
+    return { bar: { label: String(it.name ?? ''), span: [from, run] as [number, number], color: v >= 0 ? UP : DOWN }, change: Number.isFinite(v) ? v : 0, total: run };
   });
-  return <BarsFrame spec={spec} groups={[group]} unit={unit} />;
+  // The step's own amount, as on the web, and where the running total stands after it.
+  const rowsAt = (i: number) => {
+    const st = steps[i];
+    const total = { color: colors.accent, label: 'Total', value: fmt(st.total) };
+    return st.change === null ? [total] : [{ color: st.bar.color, label: 'Change', value: fmt(st.change) }, total];
+  };
+  return <BarsFrame spec={spec} groups={[steps.map(st => st.bar)]} unit={unit} rowsAt={rowsAt} pointer="band" />;
 }
 
 // ── Scatter ─────────────────────────────────────────────────────────────────
@@ -559,22 +630,51 @@ function ScatterChart({ spec }: { spec: ChartSpec }) {
   const all = series.flatMap(sr => sr.pts);
   if (!all.length) return null;
   const yUnit = spec.y_axis?.unit;
+  const fmt = unitFormatter(yUnit as Unit);
+  const xs = all.map(p => p.x);
+  const ys = all.map(p => p.y);
+  const [xlo, xhi] = [Math.min(...xs), Math.max(...xs)];
+  const [ylo, yhi] = [Math.min(...ys), Math.max(...ys)];
+  const xp = (xhi - xlo || 1) * 0.06;
+  const yp = (yhi - ylo || 1) * 0.1;
+  const yt = niceTicks(ylo - yp, yhi + yp, 4);
+  const xt = niceTicks(xlo - xp, xhi + xp, 4);
+  const y = linear(ylo - yp, yhi + yp, H - PAD.b, PAD.t);
+  const xOf = (w: number) => linear(xlo - xp, xhi + xp, PAD.l + 4, w - PAD.r - 4);
+  const sizes = all.map(p => p.size).filter(Number.isFinite);
+  const smax = sizes.length ? Math.max(...sizes) : 0;
+  const r = (p: { size: number }) => (Number.isFinite(p.size) && smax > 0 ? 3 + Math.sqrt(p.size / smax) * 9 : 4.5);
+  const xText = (v: number) => (timeX ? tipDate(v, xhi - xlo) : fmtNum(v));
+
+  // As on the web (trigger 'item'): the dot nearest the finger, its name and series, then x, y and size.
+  const tip = (w: number, _win: Win, at: ChartTouch): Tip | null => {
+    const x = xOf(w);
+    let best: { si: number; p: (typeof all)[number]; d: number } | null = null;
+    series.forEach((sr, si) =>
+      sr.pts.forEach(p => {
+        const d = Math.hypot(x(p.x) - at.x, y(p.y) - at.y);
+        if (!best || d < best.d) best = { si, p, d };
+      }),
+    );
+    if (!best) return null;
+    const { si, p } = best as { si: number; p: (typeof all)[number] };
+    const color = SERIES_COLORS[si % SERIES_COLORS.length];
+    const px = x(p.x);
+    const py = y(p.y);
+    const title = [p.name, series[si].name].filter(Boolean).join(' · ') || 'Point';
+    const rows = [
+      { color, label: spec.x_axis?.label || 'X', value: xText(p.x) },
+      { color, label: spec.y_axis?.label || 'Y', value: fmt(p.y) },
+      ...(Number.isFinite(p.size) ? [{ color, label: 'Size', value: fmtNum(p.size) }] : []),
+    ];
+    const box = 26 + rows.length * 19;
+    return { ring: { x: px, y: py, r: r(p) }, at: { x: px, y: py < H / 2 ? py + r(p) + 8 : py - r(p) - 8 - box }, title, rows };
+  };
+
   return (
-    <Frame spec={spec} legend={<Legend names={series.map(sr => sr.name)} colorsList={SERIES_COLORS} />}>
+    <Frame spec={spec} tip={tip} legend={<Legend names={series.map(sr => sr.name)} colorsList={SERIES_COLORS} />}>
       {w => {
-        const xs = all.map(p => p.x);
-        const ys = all.map(p => p.y);
-        const [xlo, xhi] = [Math.min(...xs), Math.max(...xs)];
-        const [ylo, yhi] = [Math.min(...ys), Math.max(...ys)];
-        const xp = (xhi - xlo || 1) * 0.06;
-        const yp = (yhi - ylo || 1) * 0.1;
-        const yt = niceTicks(ylo - yp, yhi + yp, 4);
-        const xt = niceTicks(xlo - xp, xhi + xp, 4);
-        const x = linear(xlo - xp, xhi + xp, PAD.l + 4, w - PAD.r - 4);
-        const y = linear(ylo - yp, yhi + yp, H - PAD.b, PAD.t);
-        const sizes = all.map(p => p.size).filter(Number.isFinite);
-        const smax = sizes.length ? Math.max(...sizes) : 0;
-        const r = (p: { size: number }) => (Number.isFinite(p.size) && smax > 0 ? 3 + Math.sqrt(p.size / smax) * 9 : 4.5);
+        const x = xOf(w);
         return (
           <Svg width={w} height={H}>
             <YAxis ticks={yt.filter(t => t >= ylo - yp && t <= yhi + yp)} y={y} w={w} fmt={axisFmt(yUnit)} />
@@ -610,19 +710,44 @@ function ScatterChart({ spec }: { spec: ChartSpec }) {
 
 function BoxplotChart({ spec }: { spec: ChartSpec }) {
   const unit = spec.y_axis?.unit;
+  const fmt = unitFormatter(unit as Unit);
   const cats = spec.x_axis?.categories ?? [];
   const rows = ((spec.series[0]?.data ?? []) as unknown[])
     .map(d => (Array.isArray(d) ? (d.length >= 6 ? d.slice(1, 6) : d.slice(0, 5)).map(num) : null))
     .filter((r): r is number[] => !!r && r.length === 5 && r.every(Number.isFinite));
   if (!rows.length) return null;
+  const lo = Math.min(...rows.map(r => r[0]));
+  const hi = Math.max(...rows.map(r => r[4]));
+  const ticks = niceTicks(lo, hi, 4);
+  const y = linear(Math.min(lo, ticks[0]), Math.max(hi, ticks[ticks.length - 1]), H - PAD.b, PAD.t);
+  const stepOf = (w: number) => (w - PAD.l - PAD.r) / rows.length;
+  const name = (i: number) => cats[i] ?? String(i + 1);
+
+  // As on the web: the five numbers of the touched box, top down.
+  const tip = (w: number, _win: Win, at: ChartTouch): Tip | null => {
+    const step = stepOf(w);
+    const i = Math.min(rows.length - 1, Math.max(0, Math.floor((at.x - PAD.l) / step)));
+    const r = rows[i];
+    const c = colors.accent;
+    return {
+      band: { x: PAD.l + step * i, w: step },
+      index: i,
+      at: { x: PAD.l + step * (i + 0.5) },
+      title: name(i),
+      rows: [
+        { color: c, label: 'Max', value: fmt(r[4]) },
+        { color: c, label: 'Q3', value: fmt(r[3]) },
+        { color: colors.textPrimary, label: 'Median', value: fmt(r[2]) },
+        { color: c, label: 'Q1', value: fmt(r[1]) },
+        { color: c, label: 'Min', value: fmt(r[0]) },
+      ],
+    };
+  };
+
   return (
-    <Frame spec={spec}>
+    <Frame spec={spec} tip={tip}>
       {w => {
-        const lo = Math.min(...rows.map(r => r[0]));
-        const hi = Math.max(...rows.map(r => r[4]));
-        const ticks = niceTicks(lo, hi, 4);
-        const y = linear(Math.min(lo, ticks[0]), Math.max(hi, ticks[ticks.length - 1]), H - PAD.b, PAD.t);
-        const step = (w - PAD.l - PAD.r) / rows.length;
+        const step = stepOf(w);
         const bw = Math.min(28, step * 0.55);
         return (
           <Svg width={w} height={H}>
@@ -635,7 +760,7 @@ function BoxplotChart({ spec }: { spec: ChartSpec }) {
                   <Rect x={cx - bw / 2} y={y(r[3])} width={bw} height={Math.max(1, y(r[1]) - y(r[3]))} fill={colors.accent} opacity={0.35} stroke={colors.accent} strokeWidth={1.2} rx={2} />
                   <Line x1={cx - bw / 2} x2={cx + bw / 2} y1={y(r[2])} y2={y(r[2])} stroke={colors.textPrimary} strokeWidth={2} />
                   <SvgText x={cx} y={H - 7} fontSize={9.5} fill={AXIS} textAnchor="middle">
-                    {(cats[i] ?? String(i + 1)).slice(0, 8)}
+                    {name(i).slice(0, 8)}
                   </SvgText>
                 </G>
               );
@@ -656,6 +781,19 @@ function pieSlices(spec: ChartSpec) {
     .filter(d => d.value > 0);
 }
 
+/** Which slice an angle falls in, measured clockwise from 12 o'clock as the slices are drawn. */
+export function sliceAt(dx: number, dy: number, values: number[]): number {
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total <= 0) return -1;
+  const turn = (Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2);
+  let acc = 0;
+  for (let i = 0; i < values.length; i++) {
+    acc += (values[i] / total) * Math.PI * 2;
+    if (turn < acc) return i;
+  }
+  return values.length - 1;
+}
+
 function PieChart({ spec }: { spec: ChartSpec }) {
   const slices = pieSlices(spec);
   const total = slices.reduce((a, b) => a + b.value, 0);
@@ -664,34 +802,59 @@ function PieChart({ spec }: { spec: ChartSpec }) {
   const R = 78;
   const r = 48;
   const C = 92;
+  const valueText = (v: number) => (unit === 'percent' ? fmtPctLevel(v) : formatValue(v, unit));
+  const pct = (v: number) => `${((v / total) * 100).toFixed(1)}%`;
   let a0 = -Math.PI / 2;
   const arcs = slices.map((sl, i) => {
     const sweep = (sl.value / total) * Math.PI * 2;
-    const a1 = a0 + Math.min(sweep, Math.PI * 2 - 1e-4);
-    const big = sweep > Math.PI ? 1 : 0;
-    const p = (rad: number, a: number) => `${C + rad * Math.cos(a)},${C + rad * Math.sin(a)}`;
-    const d = `M${p(R, a0)} A${R},${R} 0 ${big} 1 ${p(R, a1)} L${p(r, a1)} A${r},${r} 0 ${big} 0 ${p(r, a0)} Z`;
+    const from = a0;
+    const to = a0 + Math.min(sweep, Math.PI * 2 - 1e-4);
     a0 += sweep;
+    const big = sweep > Math.PI ? 1 : 0;
+    const d = (outer: number) => {
+      const p = (rad: number, a: number) => `${C + rad * Math.cos(a)},${C + rad * Math.sin(a)}`;
+      return `M${p(outer, from)} A${outer},${outer} 0 ${big} 1 ${p(outer, to)} L${p(r, to)} A${r},${r} 0 ${big} 0 ${p(r, from)} Z`;
+    };
     return { d, color: SERIES_COLORS[i % SERIES_COLORS.length] };
   });
+
+  // As on the web (trigger 'item'): the touched slice, its value and its share. Touches off the ring show nothing.
+  const tip = (w: number, _win: Win, at: ChartTouch): Tip | null => {
+    const dx = at.x - w / 2;
+    const dy = at.y - C;
+    const dist = Math.hypot(dx, dy);
+    if (dist < r - 14 || dist > R + 16) return null;
+    const i = sliceAt(dx, dy, slices.map(sl => sl.value));
+    if (i < 0) return null;
+    const sl = slices[i];
+    return {
+      index: i,
+      at: { x: at.x, y: at.y + 18 },
+      title: sl.name,
+      rows: [{ color: arcs[i].color, label: pct(sl.value), value: valueText(sl.value) }],
+    };
+  };
+
   return (
-    <Frame spec={spec}>
-      {() => (
+    <Frame spec={spec} tip={tip} fixedHeight={false}>
+      {(_w, _win, active) => (
         <View style={{ alignItems: 'center', gap: 12 }}>
           <Svg width={C * 2} height={C * 2}>
-            {arcs.map((a, i) => (
-              <Path key={i} d={a.d} fill={a.color} stroke={colors.surface} strokeWidth={2} />
-            ))}
+            {arcs.map((a, i) => {
+              const on = active?.index === i;
+              const dim = active?.index !== undefined && !on;
+              return <Path key={i} d={a.d(on ? R + 6 : R)} fill={a.color} opacity={dim ? 0.35 : 1} stroke={colors.surface} strokeWidth={2} />;
+            })}
           </Svg>
           <View style={{ alignSelf: 'stretch', gap: 6 }}>
             {slices.map((sl, i) => (
-              <View key={i} style={s.pieRow}>
+              <View key={i} style={[s.pieRow, active?.index !== undefined && active.index !== i && s.dimmed]}>
                 <View style={[s.swatch, { backgroundColor: SERIES_COLORS[i % SERIES_COLORS.length] }]} />
                 <Text style={[s.legendText, { flex: 1 }]} numberOfLines={1}>
                   {sl.name}
                 </Text>
-                <Text style={s.pieValue}>{unit === 'percent' ? fmtPctLevel(sl.value) : formatValue(sl.value, unit)}</Text>
-                <Text style={s.piePct}>{((sl.value / total) * 100).toFixed(1)}%</Text>
+                <Text style={s.pieValue}>{valueText(sl.value)}</Text>
+                <Text style={s.piePct}>{pct(sl.value)}</Text>
               </View>
             ))}
           </View>
@@ -701,16 +864,39 @@ function PieChart({ spec }: { spec: ChartSpec }) {
   );
 }
 
+/** Funnel rows: each stage's bar, and the gap under it. */
+const STAGE_H = 30;
+const STAGE_GAP = 6;
+
 function FunnelChart({ spec }: { spec: ChartSpec }) {
   const stages = pieSlices(spec);
   if (!stages.length) return null;
+  const fmt = unitFormatter(spec.y_axis?.unit as Unit);
   const top = stages[0].value;
+
+  // As on the web: the touched stage and its value, plus how much of the first stage is left by then.
+  const tip = (_w: number, _win: Win, at: ChartTouch): Tip | null => {
+    const i = Math.floor(at.y / (STAGE_H + STAGE_GAP));
+    if (i < 0 || i >= stages.length) return null;
+    const st = stages[i];
+    const color = FUNNEL[Math.min(i, FUNNEL.length - 1)];
+    return {
+      index: i,
+      at: { x: at.x, y: i * (STAGE_H + STAGE_GAP) + STAGE_H + 6 },
+      title: st.name,
+      rows: [
+        { color, label: spec.series[0]?.name || 'Value', value: fmt(st.value) },
+        ...(i > 0 ? [{ color, label: 'Of the first stage', value: `${((st.value / top) * 100).toFixed(1)}%` }] : []),
+      ],
+    };
+  };
+
   return (
-    <Frame spec={spec}>
-      {() => (
-        <View style={{ gap: 6 }}>
+    <Frame spec={spec} tip={tip} fixedHeight={false}>
+      {(_w, _win, active) => (
+        <View style={{ gap: STAGE_GAP }}>
           {stages.map((st, i) => (
-            <View key={i} style={{ alignItems: 'center' }}>
+            <View key={i} style={[{ alignItems: 'center' }, active?.index !== undefined && active.index !== i && s.dimmed]}>
               <View style={[s.funnelBar, { width: `${Math.max(14, (st.value / top) * 100)}%`, backgroundColor: FUNNEL[Math.min(i, FUNNEL.length - 1)] }]}>
                 <Text style={s.funnelText} numberOfLines={1}>
                   {st.name} · {compact(st.value)}
@@ -772,9 +958,7 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   action: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, alignItems: 'center', justifyContent: 'center' },
-  cross: { position: 'absolute', width: 1, backgroundColor: 'rgba(203,213,225,0.5)' },
-  dot: { position: 'absolute', width: 9, height: 9, borderRadius: 5, borderWidth: 1.5, borderColor: colors.surface },
-  tip: { position: 'absolute', top: 4, minWidth: 150, maxWidth: 260, padding: 9, gap: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: 'rgba(19,26,38,0.97)' },
+  tip: { position: 'absolute', padding: 9, gap: 5, borderRadius: 10, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: 'rgba(19,26,38,0.97)' },
   tipTitle: { fontFamily: fonts.medium, fontSize: 11.5, color: colors.textSecondary, marginBottom: 1 },
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   tipSwatch: { width: 8, height: 8, borderRadius: 4 },
@@ -788,6 +972,7 @@ const s = StyleSheet.create({
   pieRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   pieValue: { fontFamily: fonts.medium, fontSize: 12.5, color: colors.textPrimary },
   piePct: { fontFamily: fonts.regular, fontSize: 12, color: colors.textTertiary, width: 46, textAlign: 'right' },
-  funnelBar: { height: 30, borderRadius: 6, justifyContent: 'center', paddingHorizontal: 10 },
+  dimmed: { opacity: 0.45 },
+  funnelBar: { height: STAGE_H, borderRadius: 6, justifyContent: 'center', paddingHorizontal: 10 },
   funnelText: { fontFamily: fonts.semibold, fontSize: 12, color: '#f8fafc' },
 });

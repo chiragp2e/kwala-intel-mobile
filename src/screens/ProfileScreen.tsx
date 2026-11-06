@@ -3,6 +3,7 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatError } from '../api/errors';
 import { useAuth } from '../auth/AuthContext';
+import { AddPhone } from '../components/AddPhone';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Icon, type IconName } from '../components/Icon';
@@ -30,6 +31,8 @@ export function ProfileScreen({ navigation }: ScreenProps<'Profile'>) {
   const [draft, setDraft] = useState('');
   const [saved, setSaved] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [addingPhone, setAddingPhone] = useState(false);
+  const [phoneAdded, setPhoneAdded] = useState(false);
 
   // The field starts from the stored name, and follows it until the user edits.
   const stored = profile?.display_name ?? '';
@@ -39,6 +42,11 @@ export function ProfileScreen({ navigation }: ScreenProps<'Profile'>) {
     const t = setTimeout(() => setSaved(false), 3000);
     return () => clearTimeout(t);
   }, [saved]);
+  useEffect(() => {
+    if (!phoneAdded) return;
+    const t = setTimeout(() => setPhoneAdded(false), 3000);
+    return () => clearTimeout(t);
+  }, [phoneAdded]);
 
   if (status !== 'signedIn' || !user) {
     return (
@@ -138,6 +146,32 @@ export function ProfileScreen({ navigation }: ScreenProps<'Profile'>) {
             badge={user.phone ? (user.phoneConfirmed ? 'Verified' : 'Unverified') : null}
             ok={!!user.phoneConfirmed}
           />
+          {/* As on the web: a number is added, or an unverified one verified, with a code texted to it. It
+              then doubles as a way to sign in. */}
+          {addingPhone ? (
+            <AddPhone
+              current={user.phone && !user.phoneConfirmed ? formatPhone(user.phone) : null}
+              onCancel={() => setAddingPhone(false)}
+              onDone={() => {
+                setAddingPhone(false);
+                setPhoneAdded(true);
+              }}
+            />
+          ) : !user.phoneConfirmed ? (
+            <Pressable
+              onPress={() => setAddingPhone(true)}
+              accessibilityRole="button"
+              accessibilityLabel={user.phone ? 'Verify now' : 'Add number'}
+              style={({ pressed }) => [styles.addPhone, pressed && { backgroundColor: colors.surfaceHover }]}>
+              <Icon name="phone" size={15} color={colors.primaryNeon} />
+              <Text style={styles.addPhoneText}>{user.phone ? 'Verify now' : 'Add number'}</Text>
+            </Pressable>
+          ) : null}
+          {phoneAdded ? (
+            <Text style={styles.success} accessibilityLiveRegion="polite">
+              Mobile number verified. You can now sign in with it too.
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.card}>
@@ -159,6 +193,8 @@ export function ProfileScreen({ navigation }: ScreenProps<'Profile'>) {
         </View>
 
         <View style={styles.list}>
+          {/* Plan, renewal, cancellation and invoices. Cancelling has to be reachable in-app, without contacting support. */}
+          <Row icon="credit-card" label="Billing" onPress={() => navigation.navigate('Billing')} />
           <Row icon="info" label="About Kwala Intel" onPress={() => navigation.navigate('About')} />
           <Row icon="log-out" label="Sign out" onPress={() => setSignOutOpen(true)} warn last />
         </View>
@@ -243,6 +279,19 @@ const styles = StyleSheet.create({
   success: { ...type.small, color: colors.primaryNeon },
   error: { ...type.small, color: colors.danger },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  addPhone: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: MIN_TOUCH - 4,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    marginLeft: 18 + spacing.md,
+  },
+  addPhoneText: { ...type.small, fontFamily: fonts.semibold, color: colors.primaryNeon },
   detail: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   value: { ...type.body, fontSize: 15, marginTop: 2 },
   status: { borderRadius: radii.pill, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1 },

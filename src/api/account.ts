@@ -40,6 +40,16 @@ export async function getProfile(): Promise<Profile | null> {
   return r.success ? r.data : null;
 }
 
+/**
+ * PUT /auth/me/phone with no body: asks the Go API to re-read the account's contact details. After a number
+ * is verified, Supabase stores it and a database trigger records it, out of the API's sight; without this
+ * its cached account context keeps the old number for up to a minute (the web's syncContact).
+ */
+export async function syncContact(): Promise<void> {
+  if (mock()) return;
+  await requestJson(api('/auth/me/phone'), { method: 'PUT', body: {} });
+}
+
 /** PUT /auth/me. Only the display name is editable, as on the web. */
 export async function updateDisplayName(displayName: string): Promise<void> {
   if (mock()) return;

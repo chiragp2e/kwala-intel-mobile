@@ -11,6 +11,7 @@ import { Composer } from '../components/Composer';
 import { EmptyChat } from '../components/EmptyChat';
 import { Header } from '../components/Header';
 import { HistoryDrawer } from '../components/HistoryDrawer';
+import { useDrawerSwipe } from '../components/drawerSwipe';
 import { UpgradeModal } from '../components/UpgradeModal';
 import { MessageItem } from '../components/MessageItem';
 import type { ScreenProps } from '../navigation/types';
@@ -26,6 +27,9 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
   const offline = useIsOffline();
   const [draft, setDraft] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const openDrawer = useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const drawer = useDrawerSwipe({ onOpen: openDrawer, onClose: closeDrawer });
   const [limitOpen, setLimitOpen] = useState(false);
   const listRef = useRef<FlatList>(null);
   const signedIn = status === 'signedIn';
@@ -168,7 +172,7 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
         signedIn={signedIn}
         plan={entitlements?.plan}
         unread={signedIn ? unreadCount(notifications) : 0}
-        onMenu={() => setDrawerOpen(true)}
+        onMenu={openDrawer}
         onNewChat={startNewChat}
         onLogIn={() => navigation.navigate('SignIn')}
         onPricing={() => navigation.navigate('Pricing')}
@@ -188,7 +192,8 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
         keyboardVerticalOffset={0}>
-        <View style={styles.flex}>
+        {/* Swipe right on the conversation to pull the history drawer open. */}
+        <View style={styles.flex} {...drawer.openHandlers}>
           {chat.historyState === 'loading' ? (
             <View style={styles.center}>
               <ActivityIndicator color={colors.primary} />
@@ -200,7 +205,7 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
               <Button label="Try again" variant="secondary" onPress={() => chat.sessionId && void chat.openSession(chat.sessionId)} />
             </View>
           ) : empty ? (
-            <EmptyChat onPick={q => void submit(q)} disabled={chat.isSending} />
+            <EmptyChat onPick={q => void submit(q)} disabled={chat.isSending} scrollEnabled={!drawer.dragging} />
           ) : (
             <FlatList
               ref={listRef}
@@ -226,6 +231,7 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
               contentContainerStyle={styles.list}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
+              scrollEnabled={!drawer.dragging}
               initialNumToRender={12}
               windowSize={9}
               removeClippedSubviews={Platform.OS === 'android'}
@@ -266,7 +272,8 @@ export function ChatScreen({ navigation, route }: ScreenProps<'Chat'>) {
       />
       <HistoryDrawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
+        swipe={drawer}
         activeSessionId={chat.sessionId}
         onOpenSession={id => navigation.setParams({ sessionId: id, fresh: undefined })}
         onNewChat={startNewChat}

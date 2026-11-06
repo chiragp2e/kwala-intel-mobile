@@ -11,8 +11,9 @@ import {
   updateDisplayName,
   type UserNotification,
 } from '../api/account';
-import type { ChatSession } from '../api/schemas';
+import type { BillingAddressInput, ChatSession } from '../api/schemas';
 import { useAuth } from '../auth/AuthContext';
+import { INVOICE_POLL_MS, invoicesPending } from '../lib/billing';
 
 /** Account data is keyed by user, so one account's cache can never be shown to another. */
 export const queryKeys = {
@@ -21,6 +22,10 @@ export const queryKeys = {
   plans: ['plans'] as const,
   profile: (userId: string | null) => ['profile', userId] as const,
   notifications: (userId: string | null) => ['notifications', userId] as const,
+  subscription: (userId: string | null) => ['subscription', userId] as const,
+  billingAddress: (userId: string | null) => ['billingAddress', userId] as const,
+  invoices: (userId: string | null) => ['invoices', userId] as const,
+  gstStates: ['gstStates'] as const,
 };
 
 function useAccount() {
@@ -156,6 +161,76 @@ export function useInboxChange() {
       return { before };
     },
     onError: (_error, _change, context) => client.setQueryData(key, context?.before),
+  });
+}
+
+/** The account's subscription (GET /billing/subscription): the billing screen's plan, dates and cancel state. Re-read on every visit. */
+export function useSubscription() {
+  const { signedIn, userId } = useAccount();
+  return useQuery({
+    queryKey: queryKeys.subscription(userId),
+    queryFn: () => getBackend().getSubscription(),
+    enabled: signedIn,
+    refetchOnMount: 'always',
+  });
+}
+
+/** The address printed on GST invoices; null when none is on file. */
+export function useBillingAddress() {
+  const { signedIn, userId } = useAccount();
+  return useQuery({ queryKey: queryKeys.billingAddress(userId), queryFn: () => getBackend().getBillingAddress(), enabled: signedIn });
+}
+
+/**
+ * Payment history. Re-read every 15 seconds only while an invoice is still
+ * being prepared (about a minute end to end), and not at all otherwise.
+ */
+export function useInvoices() {
+  const { signedIn, userId } = useAccount();
+  return useQuery({
+    queryKey: queryKeys.invoices(userId),
+    queryFn: () => getBackend().listInvoices(),
+    enabled: signedIn,
+    refetchOnMount: 'always',
+    refetchInterval: query => (invoicesPending(query.state.data) ? INVOICE_POLL_MS : false),
+  });
+}
+
+/** The GST state list. Identical for everyone and never changes, so it is read once, when the address form needs it. */
+export function useGstStates(enabled: boolean) {
+  return useQuery({ queryKey: queryKeys.gstStates, queryFn: () => getBackend().listGstStates(), enabled, staleTime: Infinity });
+}
+
+/** Cancels or resumes the subscription. The answer replaces the cached one, and the plan shown everywhere else is re-read. */
+export function useSubscriptionChange() {
+  const client = useQueryClient();
+  const { userId } = useAccount();
+  return useMutation({
+    mutationFn: (which: 'cancel' | 'resume') =>
+      which === 'cancel' ? getBackend().cancelSubscription() : getBackend().resumeSubscription(),
+    onSuccess: async sub => {
+      if (sub) client.setQueryData(queryKeys.subscription(userId), sub);
+      else void client.invalidateQueries({ queryKey: queryKeys.subscription(userId) });
+      await client.invalidateQueries({ queryKey: ['entitlements'] });
+    },
+  });
+}
+
+/**
+ * Saves the billing address. The server releases any invoices that were
+ * waiting on it and clears the "address required" flag, so both are re-read.
+ */
+export function useSaveBillingAddress() {
+  const client = useQueryClient();
+  const { userId } = useAccount();
+  return useMutation({
+    mutationFn: (input: BillingAddressInput) => getBackend().saveBillingAddress(input),
+    onSuccess: address => {
+      if (address) client.setQueryData(queryKeys.billingAddress(userId), address);
+      else void client.invalidateQueries({ queryKey: queryKeys.billingAddress(userId) });
+      void client.invalidateQueries({ queryKey: queryKeys.invoices(userId) });
+      void client.invalidateQueries({ queryKey: ['entitlements'] });
+    },
   });
 }
 

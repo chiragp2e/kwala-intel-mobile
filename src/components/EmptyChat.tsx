@@ -15,11 +15,12 @@ export const SUGGESTIONS = [
   'What changed in the last 24 hours',
 ] as const;
 
-export function EmptyChat({ onPick, disabled }: { onPick: (q: string) => void; disabled?: boolean }) {
+export function EmptyChat({ onPick, disabled, scrollEnabled }: { onPick: (q: string) => void; disabled?: boolean; scrollEnabled?: boolean }) {
   // Short screens (or a guest banner on top) get a tighter layout so all five prompts fit.
   const compact = useWindowDimensions().height < 820;
   return (
     <ScrollView
+      scrollEnabled={scrollEnabled}
       contentContainerStyle={[styles.wrap, compact && styles.wrapCompact]}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag">

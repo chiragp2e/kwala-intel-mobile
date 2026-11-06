@@ -13,6 +13,8 @@ jest.mock('../src/auth/AuthContext', () => ({ useAuth: () => mockAuth() }));
 const mockEntitlements = jest.fn();
 const mockProfile = jest.fn();
 const mockSaveName = jest.fn();
+const mockSyncContact = jest.fn(async () => {});
+jest.mock('../src/api/account', () => ({ syncContact: () => mockSyncContact() }));
 jest.mock('../src/state/queries', () => ({
   useEntitlements: () => mockEntitlements(),
   useProfile: () => mockProfile(),
@@ -129,5 +131,74 @@ describe('ProfileScreen', () => {
   it('asks a guest to sign in', () => {
     mockAuth.mockReturnValue({ status: 'signedOut', user: null, signOut });
     expect(texts(render())).toContain('Sign in to see your profile');
+  });
+
+  describe('adding a mobile number', () => {
+    const startPhoneChange = jest.fn(async (_to: string) => ({ error: null as string | null }));
+    const confirmPhoneChange = jest.fn(async (_to: string, _code: string) => ({ error: null as string | null }));
+    const auth = (phone: string | null, phoneConfirmed: boolean) => ({
+      status: 'signedIn',
+      user: { id: 'u1', email: 'ada@example.com', phone, emailConfirmed: true, phoneConfirmed },
+      signOut,
+      startPhoneChange,
+      confirmPhoneChange,
+    });
+    const typeInto = (r: TestRenderer.ReactTestRenderer, label: string, text: string) => {
+      const input = r.root.findAll(n => n.props.accessibilityLabel === label && typeof n.props.onChangeText === 'function')[0];
+      act(() => input.props.onChangeText(text));
+    };
+
+    beforeEach(() => mockAuth.mockReturnValue(auth(null, false)));
+
+    it('texts a code to the number, verifies it, and tells the server', async () => {
+      const r = render();
+      press(r, 'Add number');
+      typeInto(r, 'Mobile number', '98765 43210');
+      await act(async () => press(r, 'Add & send code'));
+      expect(startPhoneChange).toHaveBeenCalledWith('+919876543210');
+      expect(texts(r)).toContain('Enter the 6-digit code sent to ');
+      await act(async () => typeInto(r, 'Verification code', '123456'));
+      expect(confirmPhoneChange).toHaveBeenCalledWith('+919876543210', '123456');
+      expect(mockSyncContact).toHaveBeenCalled();
+      expect(texts(r)).toContain('Mobile number verified. You can now sign in with it too.');
+    });
+
+    it('turns down a number that is not an Indian mobile before sending anything', async () => {
+      const r = render();
+      press(r, 'Add number');
+      typeInto(r, 'Mobile number', '12345');
+      await act(async () => press(r, 'Add & send code'));
+      expect(startPhoneChange).not.toHaveBeenCalled();
+      expect(texts(r)).toContain('Enter a valid 10-digit Indian mobile number.');
+    });
+
+    it("shows Supabase's refusal, such as a number on another account, and stays on the number", async () => {
+      startPhoneChange.mockResolvedValueOnce({ error: 'This number is already linked to another Kwala Intel account.' });
+      const r = render();
+      press(r, 'Add number');
+      typeInto(r, 'Mobile number', '9876543210');
+      await act(async () => press(r, 'Add & send code'));
+      expect(texts(r)).toContain('already linked to another Kwala Intel account');
+      expect(texts(r)).not.toContain('Enter the 6-digit code');
+    });
+
+    it('offers to verify an unverified number, starting from it; nothing for a verified one', () => {
+      mockAuth.mockReturnValue(auth('+919876543210', false));
+      const r = render();
+      press(r, 'Verify now');
+      const input = r.root.findAll(n => n.props.accessibilityLabel === 'Mobile number' && typeof n.props.onChangeText === 'function')[0];
+      expect(input.props.value).toBe('9876543210');
+      mockAuth.mockReturnValue(auth('+919876543210', true));
+      const t = texts(render());
+      expect(t).toContain('Verified');
+      expect(t).not.toContain('Add number');
+      expect(t).not.toContain('Verify now');
+    });
+  });
+
+  it('links to the billing page', () => {
+    const r = render();
+    press(r, 'Billing');
+    expect(navigation.navigate).toHaveBeenCalledWith('Billing');
   });
 });

@@ -11,6 +11,7 @@ import {
   type QuotaInfo,
 } from '../api/errors';
 import type { ChatEvent } from '../api/sse';
+import { askForAnswerNotifications, notifyAnswerReady } from '../lib/answerNotifications';
 import { keepAliveInBackground } from '../lib/backgroundTask';
 import { newId } from '../lib/uuid';
 import { applyActivity, settleActivity, type ActivityItem } from './activity';
@@ -225,6 +226,8 @@ export function useChat({ backend, onSessionTitle }: Options) {
       awayRef.current = isAway(AppState.currentState);
       // On iOS, keeps the connection up for the ~30s the OS allows after switching away.
       const releaseBackground = keepAliveInBackground('kwala-chat-answer');
+      // After the keep-alive (Android starts its service only from the foreground): may we say when it's ready?
+      void askForAnswerNotifications();
 
       let ensuredId: string | null = null;
       try {
@@ -270,6 +273,9 @@ export function useChat({ backend, onSessionTitle }: Options) {
         };
 
         await backend.streamChat({ sessionId: ensured.id, message: content, signal: controller.signal, onEvent });
+        // Finished while the user is in another app: tell them. ('inactive' is a system prompt or the
+        // app switcher over the app, not away.)
+        if (AppState.currentState === 'background') notifyAnswerReady(content);
         if (current()) {
           dispatch({ type: 'assistant_done', id: assistantId });
           void reconcile(ensured.id, gen);

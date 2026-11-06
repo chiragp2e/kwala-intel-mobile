@@ -35,7 +35,7 @@ class AnswerService : Service() {
       PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
     val notification = NotificationCompat.Builder(this, CHANNEL)
-      .setSmallIcon(applicationInfo.icon)
+      .setSmallIcon(R.drawable.kwala_notification)
       .setContentTitle("Kwala Intel")
       .setContentText("Finishing your answer…")
       .setPriority(NotificationCompat.PRIORITY_LOW)

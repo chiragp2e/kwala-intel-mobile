@@ -1,6 +1,14 @@
 import { GoogleSignin, isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
+import * as Crypto from 'expo-crypto';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform } from 'react-native';
 import { env, type Env } from '../config/env';
+
+/** modules/kwala-google (iOS only): the Google sheet with a nonce we choose. */
+export interface IosGoogleSheet {
+  signIn(hashedNonce: string): Promise<{ type: 'success'; idToken: string } | { type: 'cancelled' }>;
+}
+const iosSheet = requireOptionalNativeModule<IosGoogleSheet>('KwalaGoogle');
 
 /**
  * The native Google account sheet needs the Web client id (the ID token is issued to it, and Supabase checks
@@ -13,15 +21,22 @@ export function isNativeGoogleConfigured(os: string = Platform.OS, e: Pick<Env, 
 }
 
 export type GoogleCredential =
-  | { kind: 'token'; idToken: string }
+  /** `nonce` (iOS) is the raw value whose SHA-256 is in the token; Supabase needs it to accept the token. */
+  | { kind: 'token'; idToken: string; nonce?: string }
   | { kind: 'cancelled' }
   /** Not set up, or this device cannot show the sheet (e.g. no Google Play services): use the browser. */
   | { kind: 'unavailable' }
   | { kind: 'error' };
 
 /** Shows the native Google account sheet and returns the ID token Supabase exchanges for a session. */
-export async function requestGoogleCredential(os: string = Platform.OS, e: Env = env): Promise<GoogleCredential> {
+export async function requestGoogleCredential(
+  os: string = Platform.OS,
+  e: Env = env,
+  sheet: IosGoogleSheet | null = iosSheet,
+): Promise<GoogleCredential> {
   if (!isNativeGoogleConfigured(os, e)) return { kind: 'unavailable' };
+  // A binary from before modules/kwala-google: its tokens would be refused, so use the browser instead.
+  if (os === 'ios' && !sheet) return { kind: 'unavailable' };
   try {
     GoogleSignin.configure({
       webClientId: e.googleWebClientId,
@@ -30,6 +45,17 @@ export async function requestGoogleCredential(os: string = Platform.OS, e: Env =
     if (os === 'android') await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
     // Forget the last Google account so the sheet lets the user pick one, rather than silently reusing it.
     await GoogleSignin.signOut().catch(() => {});
+
+    if (os === 'ios' && sheet) {
+      // On iOS the token always carries a nonce (GoogleSignIn makes one up if not given one), so choose it:
+      // Google gets the SHA-256, Supabase the raw value, as with Apple (see apple.ts).
+      const nonce = Crypto.randomUUID();
+      const hashed = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, nonce);
+      const result = await sheet.signIn(hashed);
+      if (result.type !== 'success') return { kind: 'cancelled' };
+      return result.idToken ? { kind: 'token', idToken: result.idToken, nonce } : { kind: 'error' };
+    }
+
     const result = await GoogleSignin.signIn();
     if (result.type !== 'success') return { kind: 'cancelled' };
     const idToken = result.data.idToken;

@@ -254,7 +254,8 @@ export function SignInScreen({ navigation, route }: ScreenProps<'SignIn'>) {
                   accessibilityLabel={method === 'email' ? 'Email address' : 'Mobile number'}
                   onSubmitEditing={send}
                   editable={!unavailable}
-                  autoFocus={!unavailable}
+                  // No autoFocus (MOB-12): the keyboard would cover "Continue with Google" and Apple, so
+                  // the screen opens with every way in visible and the keyboard comes up on a tap.
                 />
               </View>
               {error ? (

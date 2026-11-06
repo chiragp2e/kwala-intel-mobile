@@ -1,4 +1,15 @@
-import type { ChatSession, CheckoutIntent, Entitlements, PlanView, StoredMessage, Subscription } from './schemas';
+import type {
+  BillingAddress,
+  BillingAddressInput,
+  ChatSession,
+  CheckoutIntent,
+  Entitlements,
+  GstState,
+  Invoice,
+  PlanView,
+  StoredMessage,
+  Subscription,
+} from './schemas';
 import type { ChatEvent } from './sse';
 
 /**
@@ -26,6 +37,22 @@ export interface ChatBackend {
    * still comes from the provider's own state, so this grants nothing alone.
    */
   verifyCheckout(args: { paymentId: string; subscriptionId: string; signature: string }): Promise<Subscription | null>;
+  /** Stops auto-renewal; access runs to the end of the paid period. POST /billing/subscription/cancel. */
+  cancelSubscription(): Promise<Subscription | null>;
+  /** Reverses a cancellation on the same mandate. POST /billing/subscription/resume. */
+  resumeSubscription(): Promise<Subscription | null>;
+  /** The address printed on GST invoices, or null when none is on file. GET /billing/address. */
+  getBillingAddress(): Promise<BillingAddress | null>;
+  /** Saves it and releases any invoices waiting on it. PUT /billing/address. */
+  saveBillingAddress(input: BillingAddressInput): Promise<BillingAddress | null>;
+  /** The server's GST state list, the only valid values for `state_code`. GET /billing/states. */
+  listGstStates(): Promise<GstState[]>;
+  /** Payment history with invoices, newest first. GET /billing/invoices. */
+  listInvoices(): Promise<Invoice[]>;
+  /** A short-lived signed URL for an archived invoice PDF. GET /billing/invoices/:id/download. */
+  getInvoiceDownloadUrl(invoiceId: string): Promise<string>;
+  /** Re-sends an issued invoice to the address on it. POST /billing/invoices/:id/email. */
+  emailInvoice(invoiceId: string): Promise<void>;
   /**
    * Sends one user turn and reports the streamed answer through `onEvent`.
    * Resolves when the stream ends. Throws ChatError on a refusal or failure.

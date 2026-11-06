@@ -33,6 +33,12 @@ interface AuthValue {
   signInWithGoogle(): Promise<Result>;
   /** Apple's native sign-in sheet; iOS only. `error` is null when the user cancels it. */
   signInWithApple(): Promise<Result>;
+  /**
+   * Adds (or verifies) a mobile number on the signed-in account, as the web's Profile page does: Supabase
+   * texts a code to `e164`, and the number is only stored once that code is confirmed.
+   */
+  startPhoneChange(e164: string): Promise<Result>;
+  confirmPhoneChange(e164: string, code: string): Promise<Result>;
   signOut(): Promise<void>;
 }
 
@@ -75,6 +81,36 @@ function friendly(
     return "Couldn't reach Kwala. Check your connection and try again.";
   }
   return 'Something went wrong. Please try again.';
+}
+
+/**
+ * The web's mapPhoneChangeError (kwala-intel-fe/src/lib/phone.ts). A number already confirmed on another
+ * account is refused before any SMS is sent, in words that read like a bug; say what the user can do.
+ */
+function friendlyPhoneChange(error: { message?: string; status?: number; name?: string; code?: string } | null): string | null {
+  if (!error) return null;
+  const msg = error.message ?? '';
+  if (error.code === 'phone_exists' || /already\s+(been\s+)?registered/i.test(msg)) {
+    return 'This number is already linked to another Kwala Intel account. Sign in with that account, or use a different number.';
+  }
+  if (/\ballowlist\b/i.test(msg)) {
+    return 'This number is not approved for access on this environment. Ask an admin to add it to the allowlist first.';
+  }
+  // friendly() would read "Invalid phone number" as a wrong code.
+  if (/phone/i.test(msg) && /invalid|format/i.test(msg)) return 'Enter a valid 10-digit Indian mobile number.';
+  return friendly(error, 'startPhoneChange');
+}
+
+/** The Supabase session id inside an access token, or null. */
+function sessionIdOf(accessToken: string | undefined | null): string | null {
+  if (!accessToken) return null;
+  try {
+    const part = accessToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(globalThis.atob(part.padEnd(part.length + ((4 - (part.length % 4)) % 4), '=')));
+    return typeof payload.session_id === 'string' ? payload.session_id : null;
+  } catch {
+    return null;
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -179,7 +215,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Not set up for the native sheet, or this device can't show it: the browser flow still works.
     if (google.kind === 'unavailable') return signInWithGoogleInBrowser();
 
-    const { error } = await getSupabase().auth.signInWithIdToken({ provider: 'google', token: google.idToken });
+    const { error } = await getSupabase().auth.signInWithIdToken({ provider: 'google', token: google.idToken, nonce: google.nonce });
     if (error) {
       // Diagnostic only, as in signInWithApple: most likely the Web client id is not in Supabase's Google Client IDs.
       console.error('[auth:signInWithGoogle]', { name: error.name, status: error.status, message: error.message });
@@ -212,6 +248,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null };
   }, []);
 
+  const startPhoneChange = useCallback(
+    async (e164: string): Promise<Result> => {
+      if (mock) return { error: null };
+      const { error } = await getSupabase().auth.updateUser({ phone: e164 });
+      return { error: friendlyPhoneChange(error) };
+    },
+    [mock],
+  );
+
+  const confirmPhoneChange = useCallback(
+    async (e164: string, code: string): Promise<Result> => {
+      if (mock) {
+        setUser(u => (u ? { ...u, phone: e164, phoneConfirmed: true } : u));
+        return { error: null };
+      }
+      const supabase = getSupabase();
+      const before = sessionIdOf((await supabase.auth.getSession()).data.session?.access_token);
+      const { error } = await supabase.auth.verifyOtp({ phone: e164, token: code.trim(), type: 'phone_change' });
+      if (error) return { error: friendly(error, 'confirmPhoneChange') };
+      // The new number is on the user from here; a fresh session carries it to the rest of the app.
+      await supabase.auth.refreshSession();
+      // As on the web: if Supabase issued a new session, end the old one so it does not linger as a second device.
+      const after = sessionIdOf((await supabase.auth.getSession()).data.session?.access_token);
+      if (before && after && before !== after) {
+        try {
+          await supabase.rpc('revoke_session', { target_session_id: before });
+        } catch {
+          // Best effort: it expires on its own.
+        }
+      }
+      return { error: null };
+    },
+    [mock],
+  );
+
   const signOut = useCallback(async () => {
     if (mock) return;
     await getSupabase().auth.signOut({ scope: 'local' });
@@ -228,9 +299,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       verifyPhoneCode,
       signInWithGoogle,
       signInWithApple,
+      startPhoneChange,
+      confirmPhoneChange,
       signOut,
     }),
-    [status, user, missingConfig, sendEmailCode, verifyEmailCode, sendPhoneCode, verifyPhoneCode, signInWithGoogle, signInWithApple, signOut],
+    [status, user, missingConfig, sendEmailCode, verifyEmailCode, sendPhoneCode, verifyPhoneCode, signInWithGoogle, signInWithApple, startPhoneChange, confirmPhoneChange, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

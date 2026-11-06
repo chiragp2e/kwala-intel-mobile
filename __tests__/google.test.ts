@@ -1,6 +1,13 @@
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
-import { isNativeGoogleConfigured, requestGoogleCredential } from '../src/auth/google';
+import { isNativeGoogleConfigured, requestGoogleCredential, type IosGoogleSheet } from '../src/auth/google';
 import { readEnv } from '../src/config/env';
+
+jest.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
+jest.mock('expo-crypto', () => ({
+  randomUUID: () => 'raw-nonce',
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digestStringAsync: async (_alg: string, s: string) => `sha256(${s})`,
+}));
 
 jest.mock('@react-native-google-signin/google-signin', () => ({
   GoogleSignin: {
@@ -48,11 +55,26 @@ describe('google sign-in', () => {
     expect(native.hasPlayServices).toHaveBeenCalled();
   });
 
-  it('also passes the iOS client id on iOS, and does not check Play services', async () => {
-    native.signIn.mockResolvedValueOnce({ type: 'success', data: { idToken: 'jwt' } } as never);
-    await requestGoogleCredential('ios', configured);
+  it('on iOS passes the iOS client id, and signs in with a nonce: its SHA-256 to Google, the raw value back for Supabase', async () => {
+    const sheet: IosGoogleSheet = { signIn: jest.fn().mockResolvedValue({ type: 'success', idToken: 'ios-jwt' }) };
+    expect(await requestGoogleCredential('ios', configured, sheet)).toEqual({ kind: 'token', idToken: 'ios-jwt', nonce: 'raw-nonce' });
+    expect(sheet.signIn).toHaveBeenCalledWith('sha256(raw-nonce)');
     expect(native.configure).toHaveBeenCalledWith({ webClientId: 'web.apps', iosClientId: 'ios.apps' });
     expect(native.hasPlayServices).not.toHaveBeenCalled();
+    // The library's own sheet would make up a nonce of its own, which Supabase refuses.
+    expect(native.signIn).not.toHaveBeenCalled();
+  });
+
+  it('on iOS reports a dismissed sheet and a native failure', async () => {
+    const sheet: IosGoogleSheet = { signIn: jest.fn().mockResolvedValueOnce({ type: 'cancelled' }) };
+    expect(await requestGoogleCredential('ios', configured, sheet)).toEqual({ kind: 'cancelled' });
+    (sheet.signIn as jest.Mock).mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'SIGN_IN_FAILED' }));
+    expect(await requestGoogleCredential('ios', configured, sheet)).toEqual({ kind: 'error' });
+  });
+
+  it('on an iOS build without the nonce module, uses the browser rather than a token Supabase would refuse', async () => {
+    expect(await requestGoogleCredential('ios', configured, null)).toEqual({ kind: 'unavailable' });
+    expect(native.configure).not.toHaveBeenCalled();
   });
 
   it('reports a dismissed sheet apart from a failure, and a missing token as a failure', async () => {

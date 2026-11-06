@@ -115,3 +115,166 @@ describe.each(Object.entries(specs))('chart type %s', (type, spec) => {
     expect(type).toBe(spec.chart_type);
   });
 });
+
+// ── Touch: every chart type answers a touch with a tooltip, as hovering does on the web ──
+import { Text } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { sliceAt } from '../src/blocks/charts/ChartView';
+import { unitFormatter } from '../src/blocks/lib/format';
+import { MessageItem } from '../src/components/MessageItem';
+import type { Block } from '../src/blocks/types';
+
+function touchAt(x: number, y: number) {
+  const point = { touchActive: true, startPageX: x, startPageY: y, startTimeStamp: 1, currentPageX: x, currentPageY: y, currentTimeStamp: 1, previousPageX: x, previousPageY: y, previousTimeStamp: 1 };
+  return {
+    nativeEvent: { pageX: x, pageY: y, touches: [{ pageX: x, pageY: y }], changedTouches: [], timestamp: 1 },
+    touchHistory: { numberActiveTouches: 1, indexOfSingleActiveTouch: 0, mostRecentTimeStamp: 1, touchBank: [point] },
+  };
+}
+
+const textOf = (n: TestRenderer.ReactTestInstance) =>
+  n.findAllByType(Text).map(t => ([] as unknown[]).concat(t.props.children).join('')).join(' | ');
+
+/** Draws `spec` 340 wide with the chart at the window's origin, touches it at (x, y), and returns the tooltip's text. */
+function tipFor(spec: ChartSpec, x: number, y: number): string | null {
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    r = TestRenderer.create(<ChartView spec={spec} />, {
+      createNodeMock: () => ({ measureInWindow: (cb: (x: number, y: number) => void) => cb(0, 0) }),
+    });
+  });
+  act(() => {
+    for (const i of r.root.findAll(n => typeof n.props.onLayout === 'function')) {
+      i.props.onLayout({ nativeEvent: { layout: { width: 340, height: 230 } } });
+    }
+  });
+  expect(r.root.findAll(n => n.props.testID === 'chart-tip')).toHaveLength(0);
+  // The chart sits at the window's origin (RN's jest View mock never answers measureInWindow).
+  for (const n of r.root.findAll(m => typeof (m.instance as { measureInWindow?: unknown } | null)?.measureInWindow === 'function')) {
+    (n.instance as { measureInWindow: unknown }).measureInWindow = (cb: (x: number, y: number) => void) => cb(0, 0);
+  }
+  const area = r.root.findAll(n => typeof n.props.onResponderGrant === 'function' && typeof n.props.onLayout === 'function')[0];
+  act(() => area.props.onResponderGrant(touchAt(x, y)));
+  const tip = r.root.findAll(n => n.props.testID === 'chart-tip')[0];
+  const text = tip ? textOf(tip) : null;
+  act(() => r.unmount());
+  return text;
+}
+
+/** The middle of category `i` of `n`, with the chart's 46px left and 12px right padding. */
+const catX = (i: number, n: number) => 46 + ((340 - 58) / n) * (i + 0.5);
+
+describe('chart touch', () => {
+  it('bar: every series at the touched category, as the web does', () => {
+    const fmt = unitFormatter('inr');
+    expect(tipFor(specs.bar, catX(1, 4), 100)).toBe(`IT | Buy | ${fmt(80)} | Sell | ${fmt(100)}`);
+  });
+
+  it('histogram: the bucket and its count', () => {
+    const spec: ChartSpec = { version: 1, chart_type: 'histogram', series: [{ name: 'Days', type: 'histogram', data: [[-1, 3], [0, 5], [1, 2]] }] };
+    expect(tipFor(spec, catX(1, 3), 100)).toBe('0 | Days | 5');
+  });
+
+  it("waterfall: the step's change and the running total; a total bar, the total", () => {
+    const spec: ChartSpec = {
+      version: 1,
+      chart_type: 'waterfall',
+      y_axis: { unit: 'number' },
+      series: [{ name: 'P&L', type: 'waterfall', data: [{ name: 'Start', value: 100 }, { name: 'Costs', value: -30 }, { name: 'End', total: true }] as never }],
+    };
+    const fmt = unitFormatter('number');
+    expect(tipFor(spec, catX(1, 3), 100)).toBe(`Costs | Change | ${fmt(-30)} | Total | ${fmt(70)}`);
+    expect(tipFor(spec, catX(2, 3), 100)).toBe(`End | Total | ${fmt(70)}`);
+  });
+
+  it('boxplot: the five numbers, top down', () => {
+    expect(tipFor(specs.boxplot, catX(1, 2), 100)).toMatch(/^Feb \| Max \| .+ \| Q3 \| .+ \| Median \| .+ \| Q1 \| .+ \| Min \| /);
+  });
+
+  it('scatter: the dot nearest the finger, by name and series', () => {
+    // Dots run left to right A, B, C; the middle of the plot is closest to B.
+    expect(tipFor(specs.scatter, 160, 60)).toMatch(/^B · Peers \| X \| 14 \| Y \| /);
+  });
+
+  it('pie: the slice under the finger, with its share; nothing off the ring', () => {
+    // The ring is centred at (170, 92); 60px straight up is the first slice.
+    expect(tipFor(specs.pie, 170, 32)).toMatch(/^Banks \| 40\.0% \| /);
+    expect(tipFor(specs.pie, 170, 92)).toBeNull();
+  });
+
+  it('funnel: the touched stage, and how much of the first stage is left', () => {
+    expect(tipFor(specs.funnel, 170, 40)).toBe('Tried | Stages | 60 | Of the first stage | 60.0%');
+  });
+
+  it('line and candlestick still show the date under the finger', () => {
+    expect(tipFor(specs.candlestick, 170, 100)).toMatch(/2026 \| Open \| /);
+  });
+
+  it('finds the slice clockwise from 12 o\'clock', () => {
+    const quarters = [1, 1, 1, 1];
+    expect(sliceAt(0.01, -1, quarters)).toBe(0);
+    expect(sliceAt(1, 0.01, quarters)).toBe(1);
+    expect(sliceAt(-0.01, 1, quarters)).toBe(2);
+    expect(sliceAt(-1, -0.01, quarters)).toBe(3);
+  });
+});
+
+describe('research this further', () => {
+  const blocks: Block[] = [
+    { type: 'prose', markdown: 'Flows turned.' },
+    { type: 'chart', spec: specs.bar },
+    { type: 'widget', widget: { kind: 'pill', label: 'Live' } as never },
+  ];
+  const buttons = (r: TestRenderer.ReactTestRenderer) =>
+    r.root.findAll(n => n.props.accessibilityLabel === 'Research this further' && typeof n.props.onPress === 'function');
+
+  it('puts the button on each subject block, and sends the block back in words', () => {
+    const onPrompt = jest.fn();
+    let r!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      r = TestRenderer.create(<BlockList blocks={blocks} onPrompt={onPrompt} />);
+    });
+    // Prose and the chart; not the inline pill.
+    const found = buttons(r).filter((n, i, all) => all.findIndex(m => m.props.onPress === n.props.onPress) === i);
+    expect(found).toHaveLength(2);
+    act(() => found[1].props.onPress());
+    expect(onPrompt).toHaveBeenCalledWith('Research this further — the chart "Sector flows"');
+    act(() => r.unmount());
+  });
+
+  it('has no button where there is nowhere to send it', () => {
+    let r!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      r = TestRenderer.create(<BlockList blocks={blocks} />);
+    });
+    expect(buttons(r)).toHaveLength(0);
+    act(() => r.unmount());
+  });
+});
+
+describe('long press to copy', () => {
+  beforeEach(() => (Clipboard.setStringAsync as jest.Mock).mockClear());
+  const longPressable = (r: TestRenderer.ReactTestRenderer) => r.root.findAll(n => typeof n.props.onLongPress === 'function')[0];
+
+  it('copies your own message whole, instead of the text selection menu', async () => {
+    let r!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      r = TestRenderer.create(<MessageItem message={{ id: 'u1', role: 'user', content: 'Is NIFTY overbought?', status: 'sent' } as never} statusText={null} onRetry={() => {}} />);
+    });
+    expect(r.root.findAll(n => n.props.selectable === true)).toHaveLength(0);
+    await act(async () => longPressable(r).props.onLongPress());
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith('Is NIFTY overbought?');
+    expect(JSON.stringify(r.toJSON())).toContain('Copied');
+    act(() => r.unmount());
+  });
+
+  it('copies an answer as the copy button does', async () => {
+    let r!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      r = TestRenderer.create(<MessageItem message={{ id: 'a1', role: 'assistant', content: 'RSI is **78**.', status: 'sent' } as never} statusText={null} onRetry={() => {}} />);
+    });
+    await act(async () => longPressable(r).props.onLongPress());
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith('RSI is **78**.');
+    act(() => r.unmount());
+  });
+});

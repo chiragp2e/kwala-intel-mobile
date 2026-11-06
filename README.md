@@ -26,7 +26,8 @@ npm start                       # Metro
 npm run ios                     # or: npm run android   (Android needs a flavor: use Android Studio, or `cd android && ./gradlew installStagingDebug`)
 ```
 `USE_MOCK_BACKEND=true` works **only** when `APP_ENV=development`. It signs you in as a fake user and replies with canned text
-so the UI can be shown. Staging and production builds ignore it.
+so the UI can be shown; a message containing "chart" gets one of every chart type instead (`src/api/mockBlocks.ts`). Staging
+and production builds ignore it.
 
 ## API and environment configuration
 Values live in `.env.<APP_ENV>` (`.env.staging`, `.env.production`, `.env`), copied from `.env.example`.
@@ -65,6 +66,7 @@ src/chat        transcript reducer, session provisioner, useChat (send / stream 
 src/components  Header, HistoryDrawer, Composer, MessageItem, ActivityFeed, Markdown, ConfirmDialog, banners
 src/screens     Chat, Pricing, Profile, About, Notifications, SignIn
 modules/        kwala-background: native keep-alive for a streaming answer (iOS background task, Android foreground service)
+                and the "Your answer is ready" notification; kwala-google: iOS Google sign-in with our own nonce
 src/theme       design tokens
 docs/           API_CONTRACT, OTA_RUNBOOK, RELEASE_CHECKLIST
 ```
@@ -75,11 +77,36 @@ docs/           API_CONTRACT, OTA_RUNBOOK, RELEASE_CHECKLIST
   (daily limit, signed out) removes the bubble and puts the text back in the composer.
 - **Streaming** uses `expo/fetch` (RN's built-in `fetch` cannot stream). Stop keeps the partial answer.
 - **Scrolling**: the list is inverted, so new text grows at the bottom and doesn't drag a reader away from older messages.
+- **History drawer**: swipe right on the conversation to pull it open and left (on the panel or the dimmed chat) to push it
+  closed; it follows the finger and settles past a third of its width or on a flick (`src/components/drawerSwipe.ts`). A swipe
+  only becomes the drawer's once it is clearly sideways, so the chat still scrolls and a chart being scrubbed keeps its drag.
+  The swipe area takes each touch as it starts, because Android sends JS a touch's moves only once something has taken it.
+- **Charts** answer a touch as the web's do on hover: a crosshair or shaded column and a tooltip with the web's content (every
+  series at a bar's category, a histogram bucket's count, a waterfall step and running total, the scatter dot nearest the
+  finger, a box's five numbers, a pie slice's value and share, a funnel stage). Line and candlestick charts also pinch-zoom.
+- **Research this further**: every block that is a subject (charts, card widgets, prose) has the web's microscope button in
+  its corner; it sends the block back in words as the next message (`src/blocks/lib/describe.ts`, ported from the web).
+- **Copy**: a long press on a message copies all of it (your own message, or the answer as the copy button does) and says
+  "Copied"; there is no text-selection menu. Screen readers get the same as a "Copy message" action.
+- **Sign in** opens with the keyboard down, so Apple, Google and the phone/email form are all visible (MOB-12).
+- **Adding a mobile number** (Profile, "Add number" / "Verify now"): as on the web, `supabase.auth.updateUser({ phone })` texts
+  a code and `verifyOtp({ type: 'phone_change' })` stores the number once the code checks out; then the session is refreshed
+  (the old session is revoked if Supabase issued a new one) and `PUT /auth/me/phone` tells the Go API, whose cached account
+  context would otherwise show the old number for up to a minute. A number on another account is refused before any SMS.
 - **Background / foreground**: while an answer streams the app holds it open in the background (`modules/kwala-background`: a
   short foreground service with a "Finishing your answer…" notification on Android, which otherwise cuts a backgrounded app's
   network at once; a ~30s background task on iOS). If the stream still drops, the app shows "Reconnecting…" and, back in the
   foreground, polls the session for up to two minutes for the finished answer before offering *Try again*. The AI service
   does not currently finish or store a turn whose client disconnected, so on iOS an absence longer than ~30s still ends in *Try again*.
+- **Answer ready**: an answer that finishes while the app is in the background posts "Your answer is ready" with the
+  question (tap opens the app). Permission is asked when the first question of a launch is sent (iOS asks once ever,
+  Android 13+ at most twice). Android's icon is the Kwala mark as a vector (`modules/kwala-background/.../kwala_notification.xml`).
+- **Google sign-in on iOS** goes through `modules/kwala-google`, not the library's `signIn()`: GoogleSignIn otherwise puts a
+  random nonce of its own in the ID token, and Supabase refuses a token whose nonce it isn't given. The app sends Google
+  the SHA-256 of a fresh nonce and Supabase the raw value, as for Apple. Android tokens carry no nonce.
+- **iOS scenes**: the window is created in `SceneDelegate` (in `AppDelegate.swift`, with `UIApplicationSceneManifest` in
+  Info.plist). Apps built with the iOS 27 SDK must use the scene life cycle or iOS 27 stops them at launch. The scene
+  delegate passes life-cycle events and opened URLs on to `AppDelegate`, where Expo's subscribers listen.
 - **Voice**: hold the mic to talk and let go to send, or tap to start and tap again to stop and edit. The clip (mono AAC, max 58s)
   goes to the AI service's `POST /api/transcribe`, as on the web.
 - **Notifications**: the bell reads the in-app inbox (`/notifications` on the Go API) on open, on foreground and every 5 minutes.

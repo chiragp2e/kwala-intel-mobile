@@ -1,7 +1,7 @@
 import { AppState } from 'react-native';
 import { act, renderHook, waitFor } from './renderHook.helper';
 import type { ChatBackend } from '../src/api/backend';
-import { ChatError, classifyChatResponse, networkFailure } from '../src/api/errors';
+import { ChatError, classifyChatResponse, networkFailure, streamFailure } from '../src/api/errors';
 import type { ChatEvent } from '../src/api/sse';
 import { useChat } from '../src/chat/useChat';
 
@@ -24,6 +24,14 @@ function fakeBackend(stream: Stream, history: ChatBackend['getMessages'] = async
     startSubscription: async () => ({ intent_id: 'i' }),
     getSubscription: async () => null,
     verifyCheckout: async () => null,
+    cancelSubscription: async () => null,
+    resumeSubscription: async () => null,
+    getBillingAddress: async () => null,
+    saveBillingAddress: async () => null,
+    listGstStates: async () => [],
+    listInvoices: async () => [],
+    getInvoiceDownloadUrl: async () => '',
+    emailInvoice: async () => {},
     streamChat: stream,
   };
 }
@@ -303,6 +311,49 @@ describe('useChat', () => {
         await result.current.send('q');
       });
       expect(result.current.messages[1]).toMatchObject({ status: 'failed', failure: { code: 'NETWORK', retryable: true } });
+    });
+
+    it('says "your answer is ready" when it finishes with the app in the background, and not while it is on screen', async () => {
+      const notifications = jest.requireMock('../src/lib/answerNotifications') as {
+        askForAnswerNotifications: jest.Mock;
+        notifyAnswerReady: jest.Mock;
+      };
+      notifications.notifyAnswerReady.mockClear();
+      notifications.askForAnswerNotifications.mockClear();
+      const backend = fakeBackend(async ({ onEvent }) => {
+        onEvent({ type: 'token', content: 'answer' });
+      });
+      const { result } = await renderHook(() => useChat({ backend }));
+
+      appState.currentState = 'background';
+      await act(async () => {
+        await result.current.send('what moved today?');
+      });
+      expect(notifications.askForAnswerNotifications).toHaveBeenCalled();
+      expect(notifications.notifyAnswerReady).toHaveBeenCalledWith('what moved today?');
+
+      notifications.notifyAnswerReady.mockClear();
+      for (const state of ['active', 'inactive']) {
+        appState.currentState = state;
+        await act(async () => {
+          await result.current.send('again');
+        });
+      }
+      expect(notifications.notifyAnswerReady).not.toHaveBeenCalled();
+    });
+
+    it('does not say an answer is ready when it failed', async () => {
+      const notifications = jest.requireMock('../src/lib/answerNotifications') as { notifyAnswerReady: jest.Mock };
+      notifications.notifyAnswerReady.mockClear();
+      const backend = fakeBackend(async () => {
+        throw new ChatError(streamFailure('boom'));
+      });
+      const { result } = await renderHook(() => useChat({ backend }));
+      appState.currentState = 'background';
+      await act(async () => {
+        await result.current.send('q');
+      });
+      expect(notifications.notifyAnswerReady).not.toHaveBeenCalled();
     });
   });
 

@@ -45,3 +45,38 @@ export function effectiveMonthlyMinor(annual: PlanView): number {
 export function availablePlans(plans: PlanView[]): PaidPlan[] {
   return (['pro', 'ultra'] as const).filter(p => findPlan(plans, p, 'monthly') || findPlan(plans, p, 'annual'));
 }
+
+export interface PlanAndCycle {
+  plan: PaidPlan;
+  cycle: Cycle;
+}
+
+/**
+ * Every code the web app knows (kwala-intel-fe/src/lib/billing/plans.ts): the
+ * ones on sale and the superseded ones still held by grandfathered customers.
+ * Read-only: this names what somebody is ON, it never picks what to sell.
+ */
+const KNOWN_CODES: Record<string, PlanAndCycle> = {
+  pro_in_monthly_v2: { plan: 'pro', cycle: 'monthly' },
+  pro_in_annual_v2: { plan: 'pro', cycle: 'annual' },
+  ultra_in_monthly_v1: { plan: 'ultra', cycle: 'monthly' },
+  ultra_in_annual_v1: { plan: 'ultra', cycle: 'annual' },
+  pro_in_monthly_v1: { plan: 'pro', cycle: 'monthly' },
+  pro_in_annual_v1: { plan: 'pro', cycle: 'annual' },
+};
+
+/**
+ * The plan and billing cycle a plan code names: the server's price list first
+ * (every code on sale), then the codes above. Null for a code neither claims,
+ * such as a complimentary grant: an unknown code is never guessed at, because
+ * the answer decides what a paying customer is offered.
+ */
+export function planOfCode(planCode: string | null | undefined, plans: PlanView[] = []): PlanAndCycle | null {
+  if (!planCode) return null;
+  const row = plans.find(p => p.plan_code === planCode);
+  if (row) {
+    const plan = row.plan ?? (planCode.startsWith('ultra_') ? 'ultra' : planCode.startsWith('pro_') ? 'pro' : null);
+    if (plan) return { plan, cycle: row.billing_interval };
+  }
+  return KNOWN_CODES[planCode] ?? null;
+}

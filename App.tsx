@@ -14,6 +14,7 @@ import { preloadAssets } from './src/lib/preloadAssets';
 import { QueryProvider } from './src/state/QueryProvider';
 import type { RootStackParamList } from './src/navigation/types';
 import { AboutScreen } from './src/screens/AboutScreen';
+import { BillingScreen } from './src/screens/BillingScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { PricingScreen } from './src/screens/PricingScreen';
@@ -100,6 +101,11 @@ export default function App() {
                       name="Pricing"
                       component={PricingScreen}
                       options={header('Pricing')}
+                    />
+                    <Stack.Screen
+                      name="Billing"
+                      component={BillingScreen}
+                      options={header('Billing')}
                     />
                     <Stack.Screen
                       name="Profile"

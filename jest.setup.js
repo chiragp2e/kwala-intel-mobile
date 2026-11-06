@@ -15,6 +15,7 @@ jest.mock('@react-native-community/netinfo', () => ({
   default: { addEventListener: () => () => {} },
 }));
 jest.mock('./src/lib/backgroundTask', () => ({ keepAliveInBackground: () => () => {} }));
+jest.mock('./src/lib/answerNotifications', () => ({ askForAnswerNotifications: jest.fn(async () => {}), notifyAnswerReady: jest.fn() }));
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
 jest.mock('expo-audio', () => ({
   AudioQuality: { MEDIUM: 64 },

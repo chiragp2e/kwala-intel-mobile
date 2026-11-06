@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <!-- "Your answer is ready" (AnswerReady), and the in-progress notice on Android 13+. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <application>
     <!-- Holds a streaming chat answer while the app is in the background (see AnswerService). -->
     <service

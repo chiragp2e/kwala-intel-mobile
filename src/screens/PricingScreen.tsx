@@ -13,17 +13,17 @@ import { Gradient } from '../components/Gradient';
 import { Icon } from '../components/Icon';
 import { Shine, shineGlow } from '../components/Shine';
 import { env } from '../config/env';
+import { formatLongDate } from '../lib/dates';
 import { formatInr } from '../lib/money';
+import { PLAN_FEATURES, PLAN_NAME, availablePlans, effectiveMonthlyMinor, findPlan, type Cycle, type PaidPlan } from '../lib/plans';
 import {
-  PLAN_FEATURES,
-  PLAN_NAME,
-  annualSavingMinor,
-  availablePlans,
-  effectiveMonthlyMinor,
-  findPlan,
-  type Cycle,
-  type PaidPlan,
-} from '../lib/plans';
+  annualSaving,
+  columnAction,
+  heldSubscription,
+  isComplimentary,
+  switchCopy,
+  type ColumnAction,
+} from '../lib/upgrade';
 import type { ScreenProps } from '../navigation/types';
 import { useEntitlements, useInvalidate, usePlans } from '../state/queries';
 import { MIN_TOUCH, colors, fonts, radii, spacing, type } from '../theme/tokens';
@@ -77,9 +77,10 @@ interface ColumnProps {
   plan: PaidPlan;
   cycle: Cycle;
   view: PlanView;
-  /** The monthly row, for the annual column's saving. */
-  monthly: PlanView | null;
-  current: boolean;
+  /** What annual saves over monthly; measured against the subscriber's own bill when `theirs`. */
+  saving: { minor: number; theirs: boolean };
+  /** What this column offers the account: a purchase, its current plan, a switch, or nothing. */
+  action: ColumnAction;
   starting: boolean;
   disabled: boolean;
   signedIn: boolean;
@@ -87,12 +88,15 @@ interface ColumnProps {
 }
 
 /** One billing cycle of the selected plan, as the web's PlanColumn: Annual is the featured one. */
-function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, signedIn, onGet }: ColumnProps) {
+function PlanColumn({ plan, cycle, view, saving, action, starting, disabled, signedIn, onGet }: ColumnProps) {
   const annual = cycle === 'annual';
   const ultra = plan === 'ultra';
   const featured = annual;
-  const saved = annual ? annualSavingMinor(monthly, view) : 0;
+  const saved = annual ? saving.minor : 0;
   const accent = ultra ? ULTRA : colors.primary;
+  // A paying customer's permitted move, worded as the web's pricing page offers it.
+  const offer = action.kind === 'switch' ? switchCopy({ upgrade: action.upgrade, held: action.held, plan, cycle, amountMinor: view.amount_minor }) : null;
+  const ctaLabel = offer ? offer.cta : signedIn ? `Get ${PLAN_NAME[plan]}` : `Sign in to get ${PLAN_NAME[plan]}`;
   return (
     <View style={[styles.column, featured && (ultra ? styles.featuredUltra : styles.featuredPro)]}>
       <View style={styles.columnTop}>
@@ -102,7 +106,7 @@ function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, s
         </View>
         {saved > 0 ? (
           <View style={styles.saveBadge}>
-            <Text style={styles.saveBadgeText}>SAVE {formatInr(saved)}</Text>
+            <Text style={styles.saveBadgeText}>{`SAVE ${formatInr(saved)}${saving.theirs ? ' VS YOUR PLAN' : ''}`}</Text>
           </View>
         ) : null}
       </View>
@@ -127,9 +131,20 @@ function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, s
         ))}
       </View>
 
-      {current ? (
+      {offer ? (
+        <View style={styles.offer}>
+          <Text style={styles.offerTitle}>{offer.title}</Text>
+          <Text style={styles.offerBody}>{offer.body}</Text>
+        </View>
+      ) : null}
+
+      {action.kind === 'current' ? (
         <View style={styles.currentPill}>
           <Text style={styles.currentText}>This is your current plan</Text>
+        </View>
+      ) : action.kind === 'unavailable' ? (
+        <View style={[styles.currentPill, styles.unavailable]} accessible accessibilityRole="text">
+          <Text style={styles.unavailableText}>{action.reason}</Text>
         </View>
       ) : (
         <Pressable
@@ -137,7 +152,7 @@ function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, s
           disabled={disabled}
           accessibilityState={{ busy: starting, disabled }}
           accessibilityRole="button"
-          accessibilityLabel={`Get ${PLAN_NAME[plan]} ${annual ? 'annual' : 'monthly'}, ${formatInr(view.amount_minor)} per ${annual ? 'year' : 'month'}`}
+          accessibilityLabel={`${offer ? offer.cta : `Get ${PLAN_NAME[plan]} ${annual ? 'annual' : 'monthly'}`}, ${formatInr(view.amount_minor)} per ${annual ? 'year' : 'month'}`}
           style={({ pressed }) => [
             styles.cta,
             featured ? [{ backgroundColor: accent }, shineGlow, { shadowColor: accent }] : [styles.ctaOutline, { borderColor: ultra ? 'rgba(109,108,240,0.5)' : 'rgba(74,166,100,0.5)' }],
@@ -154,9 +169,7 @@ function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, s
           ) : (
             <View style={styles.waitRow}>
               {ultra ? <Icon name="sparkles" size={18} color={featured ? colors.onPrimary : ULTRA_SOFT} /> : null}
-              <Text style={[styles.ctaText, !featured && { color: ultra ? ULTRA_SOFT : colors.primaryNeon }]}>
-                {signedIn ? `Get ${PLAN_NAME[plan]}` : `Sign in to get ${PLAN_NAME[plan]}`}
-              </Text>
+              <Text style={[styles.ctaText, !featured && { color: ultra ? ULTRA_SOFT : colors.primaryNeon }]}>{ctaLabel}</Text>
               <Icon name="arrow-right" size={18} color={featured ? colors.onPrimary : ultra ? ULTRA_SOFT : colors.primaryNeon} />
             </View>
           )}
@@ -164,8 +177,8 @@ function PlanColumn({ plan, cycle, view, monthly, current, starting, disabled, s
       )}
 
       <Text style={styles.fine}>
-        Billed {formatInr(view.amount_minor)} today and {annual ? 'every year' : 'every month'} until you cancel. Cancel anytime from billing
-        settings - you keep access to the end of the period you paid for.
+        Billed {formatInr(view.amount_minor)} today and {annual ? 'every year' : 'every month'} until you cancel.{offer?.fineSuffix ?? ''} Cancel
+        anytime from billing settings - you keep access to the end of the period you paid for.
       </Text>
     </View>
   );
@@ -192,8 +205,26 @@ export function PricingScreen({ navigation }: ScreenProps<'Pricing'>) {
   const monthlyView = plans ? findPlan(plans, plan, 'monthly') : null;
   const annualView = plans ? findPlan(plans, plan, 'annual') : null;
   const held = entitlements?.plan;
-  const isCurrent = held === plan;
+  // The plan AND billing cycle held, from the plan code: only that column is
+  // "current". A complimentary grant (a code no sold plan claims) is offered
+  // every plan, as a free account is.
+  const holding = heldSubscription(entitlements, plans ?? []);
+  const comped = isComplimentary(entitlements, plans ?? []);
+  const actionFor = (c: Cycle): ColumnAction => columnAction({ entitlements, plans: plans ?? [], plan, cycle: c });
+  const saving = annualSaving(holding, plan, monthlyView, annualView);
   const q = entitlements?.quota;
+
+  // A subscriber lands on the plan they hold, where their switch to annual is,
+  // as the web's subscriber view is about their own plan. Once they pick a tab, theirs stands.
+  const pickedTab = useRef(false);
+  const heldTab = holding?.plan ?? null;
+  useEffect(() => {
+    if (heldTab && !pickedTab.current) setPlan(heldTab);
+  }, [heldTab]);
+  const pickTab = useCallback((p: PaidPlan) => {
+    pickedTab.current = true;
+    setPlan(p);
+  }, []);
 
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   /** Which column's button opened checkout, for its spinner. */
@@ -348,21 +379,41 @@ export function PricingScreen({ navigation }: ScreenProps<'Pricing'>) {
   }
 
   const waiting = phase.kind === 'confirming' || phase.kind === 'slow';
-  const paidHere = held === 'pro' || held === 'ultra';
+  // A subscriber, as the web's subscriber view: paid, and not on a complimentary grant.
+  const paidHere = (held === 'pro' || held === 'ultra') && !comped;
+  const compedUntil = comped ? (entitlements?.billing?.accessUntil ?? null) : null;
 
   return (
     <ScrollView
       style={styles.root}
       contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.xxl }]}
       showsVerticalScrollIndicator={false}>
-      {loaded ? <PlanTabs value={plan} onChange={setPlan} /> : null}
+      {loaded ? <PlanTabs value={plan} onChange={pickTab} /> : null}
 
       <Text style={[styles.eyebrow, plan === 'ultra' && { color: ULTRA_SOFT }]}>KWALA INTEL {PLAN_NAME[plan].toUpperCase()}</Text>
       <Text style={styles.title} accessibilityRole="header">
-        {held === 'pro' || held === 'ultra' ? `You are on ${PLAN_NAME[held]}` : 'Remove the daily limit'}
+        {paidHere && (held === 'pro' || held === 'ultra') ? `You are on ${PLAN_NAME[held]}` : 'Remove the daily limit'}
       </Text>
-      {paidHere ? (
-        <Text style={styles.sub}>Every limit is removed on your account. Nothing else to do.</Text>
+      {comped ? (
+        <Text style={styles.sub}>
+          You have complimentary {PLAN_NAME[held === 'ultra' ? 'ultra' : 'pro']}
+          {compedUntil ? (
+            <>
+              {' '}
+              until <Text style={styles.subStrong}>{formatLongDate(compedUntil)}</Text>
+            </>
+          ) : null}
+          . Buying a plan ends it.
+        </Text>
+      ) : paidHere ? (
+        <>
+          <Text style={styles.sub}>
+            {entitlements?.billing?.cancelAtPeriodEnd
+              ? 'Your subscription is set to end. You keep full access until it does.'
+              : 'Every limit is removed on your account. Nothing else to do.'}
+          </Text>
+          <Button label="Manage billing" variant="secondary" onPress={() => navigation.navigate('Billing')} style={styles.manage} />
+        </>
       ) : q && !q.unlimited && q.limit > 0 ? (
         <Text style={styles.sub}>
           You have used {q.used} of {q.limit} free questions today.
@@ -435,8 +486,8 @@ export function PricingScreen({ navigation }: ScreenProps<'Pricing'>) {
               plan={plan}
               cycle={c}
               view={view}
-              monthly={monthlyView}
-              current={isCurrent}
+              saving={saving}
+              action={actionFor(c)}
               starting={phase.kind === 'starting' && startingCycle === c}
               disabled={phase.kind === 'starting' || waiting}
               signedIn={status === 'signedIn'}
@@ -501,6 +552,22 @@ const styles = StyleSheet.create({
   footnote: { ...type.small, fontSize: 12, lineHeight: 18, color: colors.textTertiary, textAlign: 'center' },
   currentPill: { minHeight: MIN_TOUCH + 4, borderRadius: radii.md, borderWidth: 1, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   currentText: { ...type.small, color: colors.textSecondary },
+  unavailable: { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  unavailableText: { ...type.small, fontSize: 12, lineHeight: 18, color: colors.textSecondary, textAlign: 'center' },
+  offer: {
+    gap: 4,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: 'rgba(74,166,100,0.2)',
+    backgroundColor: 'rgba(74,166,100,0.05)',
+  },
+  offerTitle: { ...type.small, fontFamily: fonts.semibold, color: colors.textPrimary },
+  offerBody: { ...type.small, fontSize: 12, lineHeight: 18, color: colors.textSecondary },
+  subStrong: { fontFamily: fonts.semibold, color: colors.textPrimary },
+  manage: { alignSelf: 'flex-start', marginTop: spacing.xs },
   checkoutError: { ...type.small, color: colors.danger },
   waitBox: { gap: spacing.md, padding: spacing.lg, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   waitRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },

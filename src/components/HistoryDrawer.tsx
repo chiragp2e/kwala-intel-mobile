@@ -1,17 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   Modal,
-  PanResponder,
   Pressable,
   SectionList,
   StyleSheet,
   Text,
   View,
-  useWindowDimensions,
 } from 'react-native';
-import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ChatSession } from '../api/schemas';
 import { useAuth } from '../auth/AuthContext';
@@ -20,18 +18,17 @@ import { groupSessions } from '../lib/groupSessions';
 import { useDeleteSession, useProfile, useSessions } from '../state/queries';
 import { MIN_TOUCH, colors, fonts, radii, spacing, type } from '../theme/tokens';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DRAWER_EASE as EASE, DRAWER_MS as DURATION, type DrawerSwipe } from './drawerSwipe';
 import { Icon } from './Icon';
 import { useReduceMotion } from './motion';
 
 const mark = require('../../assets/kwala-icon-white.png');
 
-/** The web drawer's curve, cubic-bezier(0.22, 1, 0.36, 1), over 300ms. */
-const EASE = Easing.bezier(0.22, 1, 0.36, 1);
-const DURATION = 300;
-
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** The panel's position and the swipes that move it (see useDrawerSwipe). */
+  swipe: DrawerSwipe;
   /** The chat on screen, highlighted in the list. */
   activeSessionId: string | null;
   onOpenSession: (id: string) => void;
@@ -48,13 +45,12 @@ interface Props {
  * Chat history, in a drawer that slides in from the left as the web app's
  * mobile drawer does (kwala-intel-fe/src/components/HomeDrawer.tsx): New chat,
  * the past chats, and the account at the bottom. Deleting a chat and signing
- * out both ask first. Swipe left or tap outside to close.
+ * out both ask first. Swipe right on the chat to pull it open; swipe left or tap outside to close.
  */
-export function HistoryDrawer({ open, onClose, activeSessionId, onOpenSession, onNewChat, onDeleted, onProfile, onPricing, onSignIn, onSignOut }: Props) {
+export function HistoryDrawer({ open, onClose, swipe, activeSessionId, onOpenSession, onNewChat, onDeleted, onProfile, onPricing, onSignIn, onSignOut }: Props) {
   const insets = useSafeAreaInsets();
   const reduce = useReduceMotion();
-  const { width: screen } = useWindowDimensions();
-  const width = Math.min(360, Math.round(screen * 0.86));
+  const { width, x } = swipe;
   const { status, user } = useAuth();
   const signedIn = status === 'signedIn';
   const { data: profile } = useProfile();
@@ -66,39 +62,22 @@ export function HistoryDrawer({ open, onClose, activeSessionId, onOpenSession, o
   const [mounted, setMounted] = useState(open);
   const [confirm, setConfirm] = useState<{ kind: 'delete'; session: ChatSession } | { kind: 'signOut' } | null>(null);
   const [deleteFailed, setDeleteFailed] = useState(false);
-  const x = useSharedValue(-width);
 
   useEffect(() => {
     if (open) {
       setMounted(true);
       if (signedIn) void sessionsQuery.refetch();
-      x.value = withTiming(0, { duration: reduce ? 0 : DURATION, easing: EASE });
+      // Opened by a swipe, the panel is already under the finger; from the menu button it slides in.
+      if (!swipe.isDragging()) x.value = withTiming(0, { duration: reduce ? 0 : DURATION, easing: EASE });
     } else if (mounted) {
       x.value = withTiming(-width, { duration: reduce ? 0 : DURATION, easing: EASE }, done => {
         if (done) runOnJS(setMounted)(false);
       });
+    } else {
+      x.value = -width;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  // Swipe left on the panel to close it.
-  const pan = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_e, g) => g.dx < -12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-      onPanResponderMove: (_e, g) => {
-        x.value = Math.min(0, g.dx);
-      },
-      onPanResponderRelease: (_e, g) => {
-        if (g.dx < -width * 0.3 || g.vx < -0.5) onCloseRef.current();
-        else x.value = withTiming(0, { duration: 180, easing: EASE });
-      },
-      onPanResponderTerminate: () => {
-        x.value = withTiming(0, { duration: 180, easing: EASE });
-      },
-    }),
-  ).current;
 
   const panel = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
   const scrim = useAnimatedStyle(() => ({ opacity: 1 + x.value / width }));
@@ -112,12 +91,12 @@ export function HistoryDrawer({ open, onClose, activeSessionId, onOpenSession, o
 
   return (
     <Modal visible={mounted} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <View style={styles.root}>
+      {/* Swipe left anywhere, on the panel or the dimmed chat beside it, to close. */}
+      <View style={styles.root} {...swipe.closeHandlers}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, scrim]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close chat history" />
         </Animated.View>
         <Animated.View
-          {...pan.panHandlers}
           style={[styles.panel, { width, paddingTop: insets.top, paddingBottom: insets.bottom }, panel]}
           accessibilityViewIsModal>
           <View style={styles.head}>
@@ -166,6 +145,7 @@ export function HistoryDrawer({ open, onClose, activeSessionId, onOpenSession, o
                 sections={sections}
                 keyExtractor={s => s.id}
                 stickySectionHeadersEnabled={false}
+                scrollEnabled={!swipe.dragging}
                 style={styles.list}
                 contentContainerStyle={styles.listContent}
                 ListHeaderComponent={

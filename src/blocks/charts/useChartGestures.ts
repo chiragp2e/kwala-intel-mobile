@@ -16,26 +16,34 @@ interface Options {
 
 const HOLD_MS = 1600;
 
+/** A touch on the chart, in the chart's own pixels (0,0 is its top left). */
+export interface ChartTouch {
+  x: number;
+  y: number;
+}
+
 /**
  * Touch handling for a chart: one finger scrubs a crosshair (and the tooltip
  * follows it), two fingers pinch to zoom and drag to pan. A mostly vertical
- * drag is left alone so the chat list can still scroll past the chart.
+ * drag is left alone so the chat list can still scroll past the chart. Each
+ * chart decides what the touch points at (a date, a bar, a slice, a dot).
  */
 export function useChartGestures({ width, left, right, win, setWin, minSpan, zoomable }: Options) {
-  const [scrub, setScrub] = useState<number | null>(null);
+  const [scrub, setScrub] = useState<ChartTouch | null>(null);
   const viewRef = useRef<View>(null);
-  const originX = useRef(0);
+  const origin = useRef({ x: 0, y: 0 });
   const live = useRef({ width, left, right, win, setWin, minSpan, zoomable });
   live.current = { width, left, right, win, setWin, minSpan, zoomable };
   const engaged = useRef(false);
+  const start = useRef({ x: 0, y: 0 });
   const pinch = useRef<{ dist: number; win: Win; anchor: number } | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => () => clearTimeout(hideTimer.current), []);
 
   const measure = useCallback(() => {
-    viewRef.current?.measureInWindow(x => {
-      if (Number.isFinite(x)) originX.current = x;
+    viewRef.current?.measureInWindow((x, y) => {
+      if (Number.isFinite(x) && Number.isFinite(y)) origin.current = { x, y };
     });
   }, []);
 
@@ -47,8 +55,9 @@ export function useChartGestures({ width, left, right, win, setWin, minSpan, zoo
   const handlers = useMemo(() => {
     const plotX = (pageX: number) => {
       const { left: l, right: r, width: w } = live.current;
-      return Math.min(w - r, Math.max(l, pageX - originX.current));
+      return Math.min(w - r, Math.max(l, pageX - origin.current.x));
     };
+    const local = (pageX: number, pageY: number): ChartTouch => ({ x: pageX - origin.current.x, y: pageY - origin.current.y });
     const frac = (px: number) => {
       const { left: l, right: r, width: w } = live.current;
       return Math.min(1, Math.max(0, (px - l) / Math.max(1, w - l - r)));
@@ -57,15 +66,24 @@ export function useChartGestures({ width, left, right, win, setWin, minSpan, zoo
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
       // Until a drag is clearly horizontal (or a second finger lands), the chat list may take the touch back.
-      onPanResponderTerminationRequest: () => !engaged.current,
+      // Measured from the event itself: a quick first move can arrive before onPanResponderMove has seen
+      // any, and a sideways drag on a chart is a scrub, not the history drawer's swipe.
+      onPanResponderTerminationRequest: e => {
+        if (engaged.current) return false;
+        const dx = Math.abs(e.nativeEvent.pageX - start.current.x);
+        const dy = Math.abs(e.nativeEvent.pageY - start.current.y);
+        return !(dx > 4 && dx >= dy);
+      },
       onPanResponderGrant: e => {
         clearTimeout(hideTimer.current);
         engaged.current = false;
         pinch.current = null;
-        const pageX = e.nativeEvent.pageX;
-        viewRef.current?.measureInWindow(x => {
-          if (Number.isFinite(x)) originX.current = x;
-          setScrub(plotX(pageX));
+        const { pageX, pageY } = e.nativeEvent;
+        start.current = { x: pageX, y: pageY };
+        // Measured on every touch: the chart moves as the chat scrolls.
+        viewRef.current?.measureInWindow((x, y) => {
+          if (Number.isFinite(x) && Number.isFinite(y)) origin.current = { x, y };
+          setScrub(local(pageX, pageY));
         });
       },
       onPanResponderMove: (e, g) => {
@@ -90,7 +108,7 @@ export function useChartGestures({ width, left, right, win, setWin, minSpan, zoo
           if (Math.abs(g.dy) > Math.max(8, Math.abs(g.dx) * 1.2)) return;
           if (Math.abs(g.dx) > 4) engaged.current = true;
         }
-        setScrub(plotX(e.nativeEvent.pageX));
+        setScrub(local(e.nativeEvent.pageX, e.nativeEvent.pageY));
       },
       onPanResponderRelease: () => {
         engaged.current = false;

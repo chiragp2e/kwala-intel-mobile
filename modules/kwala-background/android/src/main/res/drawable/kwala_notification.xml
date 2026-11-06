@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Kwala mark (kwala-intel-fe/public/kwala-icon-solid-white.svg), for the status bar: Android draws it as a silhouette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp"
+  android:height="24dp"
+  android:viewportWidth="440"
+  android:viewportHeight="440">
+  <path android:fillColor="#FFFFFFFF" android:pathData="M196.91,229.98 L220,216.65 L243.09,229.98 L312.36,189.98 L220,136.67 L127.64,189.98 L196.91,229.98 Z"/>
+  <path android:fillColor="#FFFFFFFF" android:pathData="M306.61,233.33 L295.06,239.98 L283.51,233.33 L266.19,243.33 L266.19,323.33 L231.55,343.33 L231.55,370 L323.93,316.7 L323.93,210 L306.61,220 L306.61,233.33 Z"/>
+  <path android:fillColor="#FFFFFFFF" android:pathData="M173.81,243.33 L156.49,233.33 L144.94,239.98 L133.39,233.33 L133.39,220 L116.07,210 L116.07,316.7 L208.45,370 L208.45,343.33 L173.81,323.33 L173.81,243.33 Z"/>
+  <path android:fillColor="#FFFFFFFF" android:pathData="M243.09,256.65 L220,243.33 L196.91,256.65 L196.91,310 L220,323.33 L243.09,310 L243.09,256.65 Z"/>
+  <path android:fillColor="#FFFFFFFF" android:pathData="M104.53,70 L0.6,129.98 L0.6,250.05 L92.98,303.37 L92.98,183.3 L196.91,123.33 L104.53,70 Z"/>
+  <path android:fillColor="#FFFFFFFF" android:pathData="M335.47,70 L243.09,123.33 L347.02,183.3 L347.02,303.37 L439.4,250.05 L439.4,129.98 L335.47,70 Z"/>
+</vector>

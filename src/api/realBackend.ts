@@ -5,7 +5,11 @@ import { ChatError, classifyChatResponse, networkFailure, streamFailure } from '
 import { getAuthBridge, requestJson } from './http';
 import {
   ChatSessionSchema,
+  parseBillingAddress,
   parseCheckoutIntent,
+  parseDownloadUrl,
+  parseGstStates,
+  parseInvoices,
   parseSubscription,
   PlanViewSchema,
   StoredMessageSchema,
@@ -84,6 +88,42 @@ export function createRealBackend(): ChatBackend {
           timeoutMs: 30_000,
         }),
       );
+    },
+
+    // The billing screen: the same calls as the web app's Billing page (kwala-intel-fe/src/lib/api.ts).
+
+    async cancelSubscription() {
+      return parseSubscription(await requestJson(`${api}/billing/subscription/cancel`, { method: 'POST' }));
+    },
+
+    async resumeSubscription() {
+      return parseSubscription(await requestJson(`${api}/billing/subscription/resume`, { method: 'POST' }));
+    },
+
+    async getBillingAddress() {
+      return parseBillingAddress(await requestJson(`${api}/billing/address`));
+    },
+
+    async saveBillingAddress(input) {
+      return parseBillingAddress(await requestJson(`${api}/billing/address`, { method: 'PUT', body: input }));
+    },
+
+    async listGstStates() {
+      return parseGstStates(await requestJson(`${api}/billing/states`));
+    },
+
+    async listInvoices() {
+      return parseInvoices(await requestJson(`${api}/billing/invoices?page=1&per_page=20`));
+    },
+
+    async getInvoiceDownloadUrl(invoiceId) {
+      const url = parseDownloadUrl(await requestJson(`${api}/billing/invoices/${enc(invoiceId)}/download`));
+      if (!url) throw new ChatError(streamFailure('We could not open that invoice. Try again in a moment.'));
+      return url;
+    },
+
+    async emailInvoice(invoiceId) {
+      await requestJson(`${api}/billing/invoices/${enc(invoiceId)}/email`, { method: 'POST', body: {} });
     },
 
     async streamChat({ sessionId, message, signal, onEvent }) {

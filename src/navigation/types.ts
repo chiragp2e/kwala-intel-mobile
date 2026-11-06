@@ -7,6 +7,7 @@ export type RootStackParamList = {
    */
   Chat: { sessionId?: string; fresh?: number; send?: string } | undefined;
   Pricing: undefined;
+  Billing: undefined;
   Profile: undefined;
   About: undefined;
   Notifications: undefined;

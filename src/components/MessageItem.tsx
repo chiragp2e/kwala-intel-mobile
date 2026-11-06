@@ -1,6 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
-import React, { memo, useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { memo, useCallback, useEffect, useState } from 'react';
+import { Image, Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Block } from '../api/schemas';
 import { stripFollowups, type ActivityItem } from '../chat/activity';
 import type { ChatMessage } from '../chat/messages';
@@ -43,21 +43,28 @@ export function copyText(message: Pick<ChatMessage, 'content' | 'blocks'>): stri
   return stripFollowups(fromBlocks.trim() ? fromBlocks : message.content).trim();
 }
 
-/** The web's copy button under an answer: copy icon, then a tick for two seconds. */
-function CopyButton({ text }: { text: string }) {
+/** Copies text, then says so for two seconds. Shared by the copy button and a long press on the message. */
+function useCopy() {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return;
     const t = setTimeout(() => setCopied(false), 2000);
     return () => clearTimeout(t);
   }, [copied]);
+  const copy = useCallback((text: string) => {
+    if (!text) return;
+    void Clipboard.setStringAsync(text)
+      .then(() => setCopied(true))
+      .catch(() => {});
+  }, []);
+  return { copied, copy };
+}
+
+/** The web's copy button under an answer: copy icon, then a tick for two seconds. */
+function CopyButton({ copied, onCopy }: { copied: boolean; onCopy: () => void }) {
   return (
     <Pressable
-      onPress={() => {
-        void Clipboard.setStringAsync(text)
-          .then(() => setCopied(true))
-          .catch(() => {});
-      }}
+      onPress={onCopy}
       accessibilityRole="button"
       accessibilityLabel={copied ? 'Copied' : 'Copy message'}
       hitSlop={8}
@@ -80,16 +87,35 @@ interface Props {
   reconnecting?: boolean;
 }
 
+/** For screen readers, which have no long press: the same copy as a named action. */
+const COPY_ACTION = [{ name: 'copy', label: 'Copy message' }];
+
 function MessageItemBase({ message, statusText, onRetry, onPrompt, activity, thinking, reconnecting }: Props) {
+  const { copied, copy } = useCopy();
+
   if (message.role === 'user') {
     return (
       <FadeIn rise={8} duration={220} style={styles.userRow}>
-        <View style={styles.userBubble} accessible accessibilityLabel={`You said: ${message.content}`}>
+        {/* A long press copies the whole message, in place of the system's text selection menu. A tap
+            closes the keyboard, as tapping the chat does. */}
+        <Pressable
+          onLongPress={() => copy(message.content)}
+          onPress={Keyboard.dismiss}
+          delayLongPress={400}
+          style={styles.userBubble}
+          accessible
+          accessibilityLabel={`You said: ${message.content}`}
+          accessibilityHint="Long press to copy"
+          accessibilityActions={COPY_ACTION}
+          onAccessibilityAction={e => e.nativeEvent.actionName === 'copy' && copy(message.content)}>
           <Gradient colors={USER_GRADIENT} radius={radii.lg} steps={6} />
-          <Text style={styles.userText} selectable>
-            {message.content}
+          <Text style={styles.userText}>{message.content}</Text>
+        </Pressable>
+        {copied ? (
+          <Text style={styles.copiedNote} accessibilityLiveRegion="polite">
+            Copied
           </Text>
-        </View>
+        ) : null}
       </FadeIn>
     );
   }
@@ -117,9 +143,16 @@ function MessageItemBase({ message, statusText, onRetry, onPrompt, activity, thi
               {bubbleStatus ? <Text style={styles.typingStatus}>{bubbleStatus}</Text> : null}
             </View>
           ) : failed && !message.content.length ? null : (
-            <View style={failed ? styles.failedBody : undefined}>
+            // A long press anywhere on the answer copies it, as the button below does. Charts, links and
+            // buttons inside keep their own touches; accessible={false} keeps them reachable by screen readers.
+            <Pressable
+              onLongPress={copyable ? () => copy(copyable) : undefined}
+              onPress={Keyboard.dismiss}
+              delayLongPress={400}
+              accessible={false}
+              style={failed ? styles.failedBody : undefined}>
               {rich.length ? <BlockList blocks={rich} onPrompt={onPrompt} /> : <Markdown source={markdown} />}
-            </View>
+            </Pressable>
           )}
           {!waiting && reconnecting ? <Text style={styles.status}>Reconnecting…</Text> : null}
           {!rich.length && fromBlocks.visuals > 0 ? (
@@ -146,7 +179,16 @@ function MessageItemBase({ message, statusText, onRetry, onPrompt, activity, thi
               ) : null}
             </View>
           ) : null}
-          {copyable ? <CopyButton text={copyable} /> : null}
+          {copyable ? (
+            <View style={styles.copyRow}>
+              <CopyButton copied={copied} onCopy={() => copy(copyable)} />
+              {copied ? (
+                <Text style={styles.copiedText} accessibilityLiveRegion="polite">
+                  Copied
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
       </View>
     </View>
@@ -205,5 +247,8 @@ const styles = StyleSheet.create({
   retryText: { ...type.small, color: colors.danger, fontFamily: fonts.semibold },
   visualNote: { borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
   visualText: { ...type.small, color: colors.textTertiary },
+  copyRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  copiedText: { ...type.small, fontSize: 12, color: colors.primaryNeon },
+  copiedNote: { ...type.small, fontSize: 12, color: colors.primaryNeon, marginTop: 4, marginRight: 4 },
   copy: { alignSelf: 'flex-start', width: 30, height: 30, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', marginLeft: -6 },
 });
