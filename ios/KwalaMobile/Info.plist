@@ -27,6 +27,7 @@
 			<array>
 				<string>kwalaintel</string>
 				<string>kwalaintelstaging</string>
+				<string>com.googleusercontent.apps.601900911810-1ia1taa7mvl5jnkcmn1goe7brs185h89</string>
 			</array>
 		</dict>
 	</array>
@@ -47,6 +48,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kwala Intel uses the microphone so you can ask questions by voice.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>RCTNewArchEnabled</key>

@@ -28,9 +28,12 @@ export function EmptyChat({ onPick, disabled }: { onPick: (q: string) => void; d
           {compact ? null : <View style={styles.glow} pointerEvents="none" />}
           <Image source={icon} style={styles.icon} accessibilityIgnoresInvertColors accessibilityLabel="Kwala" />
         </View>
-        <Text style={[styles.title, compact && styles.titleCompact]} accessibilityRole="header">
-          What are we tracking <Text style={styles.accent}>today?</Text>
-        </Text>
+        {/* Two texts in a wrapping row, not a nested span: Android mis-measures a nested
+            span in another font when the line wraps, and clipped "today?". */}
+        <View style={styles.titleRow} accessible accessibilityRole="header" accessibilityLabel="What are we tracking today?">
+          <Text style={[styles.title, compact && styles.titleCompact]}>What are we tracking </Text>
+          <Text style={[styles.title, styles.accent, compact && styles.titleCompact]}>today?</Text>
+        </View>
         <Text style={[styles.sub, compact && { fontSize: 13, lineHeight: 18 }]}>
           Your research partner — live market signals, real analysis, your watchlist and portfolio briefed in seconds. Ask
           anything.
@@ -60,13 +63,15 @@ const styles = StyleSheet.create({
   wrap: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.xl, gap: spacing.lg },
   wrapCompact: { padding: spacing.lg, gap: spacing.md },
   badgeCompact: { width: 56, height: 56, borderRadius: 18 },
-  titleCompact: { fontSize: 27, lineHeight: 33 },
+  titleCompact: { fontSize: 26, lineHeight: 31 },
   head: { alignItems: 'center', gap: spacing.lg },
   badge: { width: 72, height: 72, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   glow: { position: 'absolute', width: 96, height: 96, borderRadius: 48, backgroundColor: 'rgba(0,255,136,0.035)' },
   icon: { width: 52, height: 36, resizeMode: 'contain' },
-  title: { ...type.hero, textAlign: 'center' },
-  accent: { color: colors.primaryNeon },
+  // The web's `.intel-headline is-short`: Newsreader, with the last words in italic secondary.
+  titleRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
+  title: { ...type.headline, textAlign: 'center' },
+  accent: { fontFamily: fonts.serifItalic, color: colors.textSecondary },
   sub: { ...type.small, textAlign: 'center', maxWidth: 360, color: colors.textTertiary },
   list: { alignSelf: 'stretch', gap: spacing.sm, marginTop: spacing.sm },
   row: {

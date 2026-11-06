@@ -9,70 +9,80 @@ interface Props {
   signedIn: boolean;
   /** The plan held, when signed in and known. */
   plan?: 'free' | 'pro' | 'ultra';
-  onHistory: () => void;
+  /** Unread notifications, for the bell's badge. */
+  unread: number;
+  onMenu: () => void;
   onNewChat: () => void;
   onLogIn: () => void;
-  onAccount: () => void;
   onPricing: () => void;
-  /** Email or phone, for the avatar initial. */
-  identity?: string;
+  onNotifications: () => void;
 }
 
-function IconButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+function IconButton({ icon, label, onPress, badge }: { icon: IconName; label: string; onPress: () => void; badge?: number }) {
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={badge ? `${label}, ${badge} unread` : label}
       hitSlop={4}
       style={({ pressed }) => [styles.icon, pressed && { backgroundColor: colors.surfaceHover }]}>
-      <Icon name={icon} size={23} color={colors.textSecondary} />
+      <Icon name={icon} size={22} color={colors.textSecondary} />
+      {badge ? (
+        <View style={styles.badge} accessibilityElementsHidden importantForAccessibility="no">
+          <Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 }
 
 /**
- * Top bar. Guests get a single "Log in" link (creating an account is one tap away on
- * that screen), free accounts a shiny "Upgrade" pill, paid accounts their plan badge.
+ * Top bar, laid out as the web app's mobile header: the chat-history toggle at
+ * the top left, then the logo; on the right the plan (an "Upgrade" pill for free
+ * accounts, the plan badge for paid ones), the notification bell and New chat.
+ * Guests get New chat and a "Log in" link instead.
  */
-export function Header({ signedIn, plan, onHistory, onNewChat, onLogIn, onAccount, onPricing, identity }: Props) {
+export function Header({ signedIn, plan, unread, onMenu, onNewChat, onLogIn, onPricing, onNotifications }: Props) {
   const paid = plan === 'pro' || plan === 'ultra';
   return (
     <View style={styles.bar}>
-      <Logo width={92} />
-      {signedIn ? (
-        <View style={styles.right}>
-          {paid ? (
-            <Pressable onPress={onPricing} accessibilityRole="button" accessibilityLabel={`${plan} plan`} style={styles.planBadge}>
-              {plan === 'ultra' ? <Icon name="sparkles" size={13} color="#a9a8ff" /> : null}
-              <Text style={styles.planBadgeText}>{plan === 'ultra' ? 'ULTRA' : 'PRO'}</Text>
+      <View style={styles.left}>
+        <IconButton icon="panel-left" label="Open chat history" onPress={onMenu} />
+        <Pressable onPress={onNewChat} accessibilityRole="button" accessibilityLabel="Kwala Intel, start a new chat" hitSlop={4}>
+          <Logo width={84} />
+        </Pressable>
+      </View>
+      <View style={styles.right}>
+        {signedIn ? (
+          <>
+            {paid ? (
+              <Pressable onPress={onPricing} accessibilityRole="button" accessibilityLabel={`${plan} plan`} style={styles.planBadge}>
+                {plan === 'ultra' ? <Icon name="sparkles" size={13} color="#a9a8ff" /> : null}
+                <Text style={styles.planBadgeText}>{plan === 'ultra' ? 'ULTRA' : 'PRO'}</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={onPricing}
+                accessibilityRole="button"
+                accessibilityLabel="Upgrade, see plans"
+                style={({ pressed }) => [styles.upgrade, shineGlow, pressed && { opacity: 0.85 }]}>
+                <Shine radius={radii.pill} />
+                <Icon name="sparkles" size={14} color={colors.onPrimary} />
+                <Text style={styles.upgradeText}>Upgrade</Text>
+              </Pressable>
+            )}
+            <IconButton icon="bell" label="Notifications" onPress={onNotifications} badge={unread} />
+            <IconButton icon="square-pen" label="New chat" onPress={onNewChat} />
+          </>
+        ) : (
+          <>
+            <IconButton icon="square-pen" label="New chat" onPress={onNewChat} />
+            <Pressable onPress={onLogIn} accessibilityRole="button" accessibilityLabel="Log in" style={styles.link}>
+              <Text style={styles.linkText}>Log in</Text>
             </Pressable>
-          ) : (
-            <Pressable
-              onPress={onPricing}
-              accessibilityRole="button"
-              accessibilityLabel="Upgrade, see plans"
-              style={({ pressed }) => [styles.upgrade, shineGlow, pressed && { opacity: 0.85 }]}>
-              <Shine radius={radii.pill} />
-              <Icon name="sparkles" size={14} color={colors.onPrimary} />
-              <Text style={styles.upgradeText}>Upgrade</Text>
-            </Pressable>
-          )}
-          <IconButton icon="panel-left" label="Chat history" onPress={onHistory} />
-          <IconButton icon="square-pen" label="New chat" onPress={onNewChat} />
-          <Pressable onPress={onAccount} accessibilityRole="button" accessibilityLabel="Account" hitSlop={4} style={styles.icon}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{(identity?.trim()[0] ?? 'K').toUpperCase()}</Text>
-            </View>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={styles.right}>
-          <Pressable onPress={onLogIn} accessibilityRole="button" accessibilityLabel="Log in" style={styles.link}>
-            <Text style={styles.linkText}>Log in</Text>
-          </Pressable>
-        </View>
-      )}
+          </>
+        )}
+      </View>
     </View>
   );
 }
@@ -80,8 +90,7 @@ export function Header({ signedIn, plan, onHistory, onNewChat, onLogIn, onAccoun
 const styles = StyleSheet.create({
   bar: {
     minHeight: 56,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
+    paddingHorizontal: spacing.xs,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -89,10 +98,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  left: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   right: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   icon: { width: MIN_TOUCH, height: MIN_TOUCH, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' },
-  avatar: { width: 30, height: 30, borderRadius: 15, backgroundColor: colors.userBubble, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontFamily: fonts.bold, fontSize: 14, color: colors.onPrimary },
+  badge: {
+    position: 'absolute',
+    top: 6,
+    right: 5,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    backgroundColor: colors.error,
+    borderWidth: 1.5,
+    borderColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { fontFamily: fonts.bold, fontSize: 9, lineHeight: 11, color: colors.onPrimary },
   upgrade: {
     height: 34,
     paddingHorizontal: spacing.md,
@@ -116,6 +139,6 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   planBadgeText: { fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1, color: '#a9a8ff' },
-  link: { minHeight: MIN_TOUCH, paddingHorizontal: spacing.sm, justifyContent: 'center' },
+  link: { minHeight: MIN_TOUCH, paddingHorizontal: spacing.md, justifyContent: 'center' },
   linkText: { ...type.small, color: colors.textSecondary, fontSize: 15 },
 });

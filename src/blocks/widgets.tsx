@@ -590,7 +590,7 @@ const s = StyleSheet.create({
   bullet: { flexDirection: 'row', gap: 8 },
   dot: { width: 4, height: 4, borderRadius: 2, marginTop: 8 },
   bulletText: { flex: 1, fontFamily: fonts.regular, fontSize: 13.5, lineHeight: 20, color: colors.textSecondary },
-  symbol: { fontFamily: fonts.mono, fontSize: 15, fontWeight: '600', color: colors.textPrimary },
+  symbol: { fontFamily: fonts.monoMedium, fontSize: 15, color: colors.textPrimary },
   posGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 },
   posCell: { width: '50%', paddingRight: 8 },
   posValue: { fontFamily: fonts.medium, fontSize: 14, color: colors.textPrimary, marginTop: 2 },

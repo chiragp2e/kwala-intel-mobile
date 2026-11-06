@@ -7,7 +7,11 @@ import { splashGif, splashStill } from './splashSource';
 /** The GIF's own background, so the animation has no visible edge on the screen. */
 export const SPLASH_BG = '#060706';
 
-/** The GIF is 960x540. By 3.4s the mark has assembled and "kwala" is typed out. */
+/**
+ * The GIF is 960x540. By 3.4s the mark has assembled and "kwala" is typed out,
+ * in the brand green (colors.brand); its colour tables were recoloured from the
+ * original lime, the frames themselves are unchanged.
+ */
 const RATIO = 960 / 540;
 const PLAY_MS = 3700;
 const EXIT_MS = 350;

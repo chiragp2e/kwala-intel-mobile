@@ -1,3 +1,5 @@
+import { isActivityEvent, type ActivityEvent } from '../chat/activity';
+
 /**
  * Server-sent events from the chat service: lines of `data: {json}`, where the
  * JSON is `{ type, content }`. Unknown types are ignored so the backend can add
@@ -9,10 +11,14 @@ export type ChatEvent =
   | { type: 'block'; content: Record<string, unknown> }
   | { type: 'blocks_reset' }
   | { type: 'session_title'; content: string }
+  /** One unit of the agent's work, sent as `running` then `done` (see chat/activity). */
+  | { type: 'activity'; content: ActivityEvent }
+  /** The agent's plan in prose; appended, it can arrive more than once. */
+  | { type: 'thinking'; content: string }
   | { type: 'error'; content: string }
   | { type: 'done' };
 
-const STRING_EVENTS = new Set(['status', 'token', 'session_title', 'error']);
+const STRING_EVENTS = new Set(['status', 'token', 'session_title', 'error', 'thinking']);
 
 export function parseEventLine(line: string): ChatEvent | null {
   if (!line.startsWith('data: ')) return null;
@@ -30,6 +36,7 @@ export function parseEventLine(line: string): ChatEvent | null {
   if (STRING_EVENTS.has(type)) {
     return typeof content === 'string' ? ({ type, content } as ChatEvent) : null;
   }
+  if (type === 'activity') return isActivityEvent(content) ? { type, content } : null;
   if (type === 'block') {
     return content && typeof content === 'object' ? { type, content: content as Record<string, unknown> } : null;
   }

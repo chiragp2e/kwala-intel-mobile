@@ -20,7 +20,21 @@ export type IconName =
   | 'clock'
   | 'gauge'
   | 'check'
-  | 'infinity';
+  | 'infinity'
+  | 'mail'
+  | 'phone'
+  | 'bell'
+  | 'copy'
+  | 'mic'
+  | 'stop'
+  | 'trash'
+  | 'message-square'
+  | 'log-out'
+  | 'history'
+  | 'tag'
+  | 'alert-triangle'
+  | 'info'
+  | 'user';
 
 /**
  * Lucide's drawings (the set the web app uses), on a 24 grid. Drawn with
@@ -72,7 +86,71 @@ const LUCIDE: Partial<Record<IconName, (c: string) => React.ReactNode>> = {
   ),
   gauge: c => <Path d="m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0" stroke={c} />,
   check: c => <Polyline points="20 6 9 17 4 12" stroke={c} />,
+  mail: c => (
+    <>
+      <Rect x={2} y={4} width={20} height={16} rx={2} stroke={c} />
+      <Path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" stroke={c} />
+    </>
+  ),
+  phone: c => (
+    <Path
+      d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"
+      stroke={c}
+    />
+  ),
   infinity: c => <Path d="M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8" stroke={c} />,
+  bell: c => (
+    <>
+      <Path d="M10.268 21a2 2 0 0 0 3.464 0" stroke={c} />
+      <Path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" stroke={c} />
+    </>
+  ),
+  copy: c => (
+    <>
+      <Rect x={8} y={8} width={14} height={14} rx={2} stroke={c} />
+      <Path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" stroke={c} />
+    </>
+  ),
+  mic: c => (
+    <>
+      <Path d="M12 19v3M19 10v2a7 7 0 0 1-14 0v-2" stroke={c} />
+      <Rect x={9} y={2} width={6} height={13} rx={3} stroke={c} />
+    </>
+  ),
+  stop: c => <Rect x={5} y={5} width={14} height={14} rx={2.5} stroke={c} fill={c} />,
+  trash: c => <Path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6" stroke={c} />,
+  'message-square': c => <Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z" stroke={c} />,
+  'log-out': c => (
+    <>
+      <Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M21 12H9" stroke={c} />
+      <Polyline points="16 17 21 12 16 7" stroke={c} />
+    </>
+  ),
+  history: c => (
+    <>
+      <Path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" stroke={c} />
+      <Path d="M3 3v5h5M12 7v5l4 2" stroke={c} />
+    </>
+  ),
+  tag: c => (
+    <>
+      <Path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" stroke={c} />
+      <Circle cx={7.5} cy={7.5} r={0.5} stroke={c} fill={c} />
+    </>
+  ),
+  'alert-triangle': c => <Path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01" stroke={c} />,
+  info: c => (
+    <>
+      <Circle cx={12} cy={12} r={10} stroke={c} />
+      <Path d="M12 16v-4M12 8h.01" stroke={c} />
+    </>
+  ),
+  user: c => (
+    <>
+      <Path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" stroke={c} />
+      <Circle cx={12} cy={7} r={4} stroke={c} />
+    </>
+  ),
 };
 
 interface Props {

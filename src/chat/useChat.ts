@@ -4,15 +4,58 @@ import type { ChatBackend } from '../api/backend';
 import {
   ChatError,
   abortedFailure,
+  interruptedFailure,
   networkFailure,
   streamFailure,
   type ChatFailure,
   type QuotaInfo,
 } from '../api/errors';
 import type { ChatEvent } from '../api/sse';
+import { keepAliveInBackground } from '../lib/backgroundTask';
 import { newId } from '../lib/uuid';
+import { applyActivity, settleActivity, type ActivityItem } from './activity';
 import { fromStored, messagesReducer, type ChatMessage, type MessageAction } from './messages';
 import { createSessionProvisioner } from './sessionProvisioner';
+
+/** How long, once back in the foreground, to look for an answer that finished while the app was away. */
+const RECOVER_FOR_MS = 120_000;
+const RECOVER_POLL_MS = 3_000;
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done);
+  });
+}
+
+/** In the background or on its way there (iOS reports `inactive` first). */
+const isAway = (state: string | null | undefined) => state === 'background' || state === 'inactive';
+
+/** Resolves once the app is in the foreground (or the wait is cancelled). */
+function untilActive(signal: AbortSignal): Promise<void> {
+  if (!isAway(AppState.currentState) || signal.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const sub = AppState.addEventListener('change', s => s === 'active' && done());
+    function done() {
+      sub.remove();
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done);
+  });
+}
+
+/** The server has this turn's answer: as many questions as on screen, and an answer after the last. */
+export function hasAnswerFor(stored: ChatMessage[], local: ChatMessage[]): boolean {
+  const last = stored[stored.length - 1];
+  const asked = (list: ChatMessage[]) => list.filter(m => m.role === 'user').length;
+  return !!last && last.role === 'assistant' && (!!last.content.trim() || !!last.blocks?.length) && asked(stored) >= asked(local);
+}
 
 export type SendResult =
   | { ok: true }
@@ -48,6 +91,13 @@ export function useChat({ backend, onSessionTitle }: Options) {
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
   const [historyState, setHistoryState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // The agent's work on the latest turn, shown above its answer (see components/ActivityFeed).
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [thinking, setThinking] = useState('');
+  /** The stream dropped while the app was away; the finished answer is being fetched. */
+  const [reconnecting, setReconnecting] = useState(false);
+  /** The app left the foreground at some point during the current send. */
+  const awayRef = useRef(false);
 
   const provisioner = useMemo(
     () => createSessionProvisioner(id => backend.createSession(id), newId),
@@ -72,6 +122,9 @@ export function useChat({ backend, onSessionTitle }: Options) {
     sendingRef.current = false;
     setIsSending(false);
     setStatusText(null);
+    setReconnecting(false);
+    setActivity([]);
+    setThinking('');
   }, []);
 
   /** Replace the transcript with the server's, when the server has at least as much. */
@@ -120,6 +173,34 @@ export function useChat({ backend, onSessionTitle }: Options) {
     dispatch({ type: 'replace', messages: [] });
   }, [detach, dispatch, provisioner]);
 
+  /**
+   * After the stream dropped while the app was in the background: once the app
+   * is back, look for the answer on the server (it may have finished without
+   * us) and show it. False when there is none after RECOVER_FOR_MS, or when the
+   * user stopped, left the chat or the screen went away.
+   */
+  const recoverAnswer = useCallback(
+    async (id: string, gen: number, signal: AbortSignal): Promise<boolean> => {
+      await untilActive(signal);
+      const until = Date.now() + RECOVER_FOR_MS;
+      const live = () => !signal.aborted && gen === generationRef.current && mountedRef.current;
+      while (live() && Date.now() < until) {
+        try {
+          const stored = fromStored(await backend.getMessages(id));
+          if (live() && hasAnswerFor(stored, messagesRef.current)) {
+            dispatch({ type: 'replace', messages: stored });
+            return true;
+          }
+        } catch {
+          // Still offline or a blip: try again on the next beat.
+        }
+        await sleep(RECOVER_POLL_MS, signal);
+      }
+      return false;
+    },
+    [backend, dispatch],
+  );
+
   const send = useCallback(
     async (raw: string): Promise<SendResult> => {
       const content = raw.trim();
@@ -138,6 +219,12 @@ export function useChat({ backend, onSessionTitle }: Options) {
       dispatch({ type: 'assistant_started', id: assistantId, replyTo: userId, now: Date.now() });
       setIsSending(true);
       setStatusText(null);
+      setActivity([]);
+      setThinking('');
+      setReconnecting(false);
+      awayRef.current = isAway(AppState.currentState);
+      // On iOS, keeps the connection up for the ~30s the OS allows after switching away.
+      const releaseBackground = keepAliveInBackground('kwala-chat-answer');
 
       let ensuredId: string | null = null;
       try {
@@ -161,6 +248,16 @@ export function useChat({ backend, onSessionTitle }: Options) {
             case 'blocks_reset':
               dispatch({ type: 'blocks_reset', id: assistantId });
               break;
+            case 'activity': {
+              const step = e.content;
+              setActivity(prev => applyActivity(prev, step, Date.now()));
+              break;
+            }
+            case 'thinking': {
+              const prose = e.content.trim();
+              if (prose) setThinking(prev => (prev ? `${prev} ${prose}` : prose));
+              break;
+            }
             case 'session_title':
               if (ensuredId && e.content.trim()) onSessionTitle?.(ensuredId, e.content.trim());
               break;
@@ -179,12 +276,22 @@ export function useChat({ backend, onSessionTitle }: Options) {
         }
         return { ok: true };
       } catch (err) {
-        const failure: ChatFailure =
+        let failure: ChatFailure =
           err instanceof ChatError
             ? err.failure
             : controller.signal.aborted
               ? abortedFailure()
               : networkFailure();
+
+        // The OS cut the connection while the app was away. The server may well
+        // have finished the answer: fetch it instead of showing an error.
+        if (failure.code === 'NETWORK' && awayRef.current && ensuredId && !controller.signal.aborted) {
+          if (current()) setReconnecting(true);
+          const recovered = await recoverAnswer(ensuredId, gen, controller.signal);
+          if (current()) setReconnecting(false);
+          if (recovered) return { ok: true };
+          failure = controller.signal.aborted ? abortedFailure() : interruptedFailure();
+        }
 
         if (failure.code === 'ABORTED') {
           // The user pressed stop: keep the partial answer if there is one.
@@ -212,14 +319,16 @@ export function useChat({ backend, onSessionTitle }: Options) {
         if (current()) dispatch({ type: 'assistant_failed', id: assistantId, failure });
         return { ok: false, failure };
       } finally {
+        releaseBackground();
         if (current()) {
           sendingRef.current = false;
           setIsSending(false);
           setStatusText(null);
+          setActivity(prev => settleActivity(prev, Date.now()));
         }
       }
     },
-    [backend, dispatch, onSessionTitle, provisioner, reconcile],
+    [backend, dispatch, onSessionTitle, provisioner, reconcile, recoverAnswer],
   );
 
   /** Retry a failed turn: drop the failed reply and its question, then send the question again. */
@@ -239,6 +348,7 @@ export function useChat({ backend, onSessionTitle }: Options) {
   // Back from the background: pick up an answer that finished while we were away.
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
+      if (isAway(state) && sendingRef.current) awayRef.current = true;
       const id = provisioner.current;
       if (state === 'active' && id && !sendingRef.current) void reconcile(id, generationRef.current);
     });
@@ -252,6 +362,9 @@ export function useChat({ backend, onSessionTitle }: Options) {
     statusText,
     quota,
     historyState,
+    activity,
+    thinking,
+    reconnecting,
     send,
     retry,
     stop,

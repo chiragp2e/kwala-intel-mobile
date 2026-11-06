@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { act, renderHook, waitFor } from './renderHook.helper';
 import type { ChatBackend } from '../src/api/backend';
 import { ChatError, classifyChatResponse, networkFailure } from '../src/api/errors';
@@ -228,5 +229,102 @@ describe('useChat', () => {
       await b.result.current.openSession('s1');
     });
     expect(b.result.current.historyState).toBe('error');
+  });
+
+  describe('when the app went to the background mid-answer', () => {
+    const appState = AppState as unknown as { currentState: unknown };
+    let before: unknown;
+    beforeEach(() => {
+      before = appState.currentState;
+    });
+    afterEach(() => {
+      appState.currentState = before;
+    });
+
+    it('fetches the finished answer from the server instead of showing a network error', async () => {
+      const backend = fakeBackend(
+        async ({ onEvent }) => {
+          onEvent({ type: 'token', content: 'part' });
+          // The OS cut the connection while away; the app is back by the time the error lands.
+          appState.currentState = 'active';
+          throw new ChatError(networkFailure());
+        },
+        async () => [
+          { id: 'srv-u', role: 'user', content: 'q', created_at: '2026-11-06T10:00:00Z' },
+          { id: 'srv-a', role: 'assistant', content: 'the full answer', created_at: '2026-11-06T10:00:30Z' },
+        ],
+      );
+      const { result } = await renderHook(() => useChat({ backend }));
+      appState.currentState = 'background';
+      let r: Awaited<ReturnType<typeof result.current.send>> | undefined;
+      await act(async () => {
+        r = await result.current.send('q');
+      });
+      expect(r).toEqual({ ok: true });
+      expect(result.current.messages.map(m => [m.role, m.content, m.status])).toEqual([
+        ['user', 'q', 'sent'],
+        ['assistant', 'the full answer', 'sent'],
+      ]);
+      expect(result.current.reconnecting).toBe(false);
+    });
+
+    it('stop while reconnecting ends it without a failed bubble', async () => {
+      const backend = fakeBackend(
+        async () => {
+          appState.currentState = 'active';
+          throw new ChatError(networkFailure());
+        },
+        async () => [],
+      );
+      const { result } = await renderHook(() => useChat({ backend }));
+      appState.currentState = 'background';
+      let p!: Promise<Awaited<ReturnType<typeof result.current.send>>>;
+      await act(async () => {
+        p = result.current.send('q');
+      });
+      await waitFor(() => expect(result.current.reconnecting).toBe(true));
+      let r: Awaited<ReturnType<typeof result.current.send>> | undefined;
+      await act(async () => {
+        result.current.stop();
+        r = await p;
+      });
+      expect(r).toMatchObject({ ok: false, failure: { code: 'ABORTED' } });
+      expect(result.current.messages.some(m => m.status === 'failed')).toBe(false);
+      expect(result.current.isSending).toBe(false);
+    });
+
+    it('a drop with the app in the foreground is still a retryable network error', async () => {
+      appState.currentState = 'active';
+      const backend = fakeBackend(async () => {
+        throw new ChatError(networkFailure());
+      });
+      const { result } = await renderHook(() => useChat({ backend }));
+      await act(async () => {
+        await result.current.send('q');
+      });
+      expect(result.current.messages[1]).toMatchObject({ status: 'failed', failure: { code: 'NETWORK', retryable: true } });
+    });
+  });
+
+  it("collects the agent's steps and narration for the turn, and settles them when it ends", async () => {
+    const backend = fakeBackend(async ({ onEvent }) => {
+      onEvent({ type: 'thinking', content: 'Checking prices.' });
+      onEvent({ type: 'activity', content: { id: 'a1', state: 'running', label: 'Fetching BTC', group: 'market' } });
+      onEvent({ type: 'activity', content: { id: 'a2', state: 'running', label: 'Searching news', group: 'web' } });
+      onEvent({ type: 'activity', content: { id: 'a1', state: 'done', label: 'Fetched BTC', group: 'market', ms: 900 } });
+      onEvent({ type: 'thinking', content: 'Then news.' });
+      onEvent({ type: 'token', content: 'answer' });
+    });
+    const { result } = await renderHook(() => useChat({ backend }));
+    await act(async () => {
+      await result.current.send('q');
+    });
+    expect(result.current.thinking).toBe('Checking prices. Then news.');
+    expect(result.current.activity.map(a => [a.id, a.label, a.state])).toEqual([
+      ['a1', 'Fetched BTC', 'done'],
+      ['a2', 'Searching news', 'done'],
+    ]);
+    act(() => result.current.newChat());
+    await waitFor(() => expect(result.current.activity).toEqual([]));
   });
 });

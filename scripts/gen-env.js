@@ -32,6 +32,8 @@ const KEYS = [
   'WEB_BASE_URL',
   'USE_MOCK_BACKEND',
   'RAZORPAY_KEY_ID',
+  'GOOGLE_WEB_CLIENT_ID',
+  'GOOGLE_IOS_CLIENT_ID',
 ];
 const out = {
   APP_ENV: appEnv,

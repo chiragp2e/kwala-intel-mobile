@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { setAuthBridge } from '../api/http';
 import { env, missingBackendConfig } from '../config/env';
 import { requestAppleCredential } from './apple';
+import { requestGoogleCredential } from './google';
 import { parseOAuthCallback, oauthRedirectUri } from './oauth';
 import { getSupabase } from './supabase';
 
@@ -11,6 +12,9 @@ export interface AuthUser {
   id: string;
   email: string | null;
   phone: string | null;
+  /** Supabase has confirmed the address / number (email_confirmed_at, phone_confirmed_at). */
+  emailConfirmed?: boolean;
+  phoneConfirmed?: boolean;
 }
 
 type Status = 'loading' | 'signedOut' | 'signedIn';
@@ -34,11 +38,19 @@ interface AuthValue {
 
 const AuthContext = createContext<AuthValue | null>(null);
 
-const MOCK_USER: AuthUser = { id: 'dev-mock-user', email: 'dev@mock.local', phone: null };
+const MOCK_USER: AuthUser = { id: 'dev-mock-user', email: 'dev@mock.local', phone: null, emailConfirmed: true };
 
 function toUser(session: Session | null): AuthUser | null {
   const u = session?.user;
-  return u ? { id: u.id, email: u.email ?? null, phone: u.phone ?? null } : null;
+  return u
+    ? {
+        id: u.id,
+        email: u.email || null,
+        phone: u.phone || null,
+        emailConfirmed: !!u.email_confirmed_at,
+        phoneConfirmed: !!u.phone_confirmed_at,
+      }
+    : null;
 }
 
 /** Plain-language errors; never the raw provider message. */
@@ -134,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: friendly(error, 'verifyPhoneCode') };
   }, []);
 
-  const signInWithGoogle = useCallback(async (): Promise<Result> => {
+  const signInWithGoogleInBrowser = useCallback(async (): Promise<Result> => {
     const supabase = getSupabase();
     const redirectTo = oauthRedirectUri();
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -158,6 +170,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const exchanged = await supabase.auth.exchangeCodeForSession(callback.code);
     return { error: exchanged.error ? 'Google sign-in failed. Please try again.' : null };
   }, []);
+
+  const signInWithGoogle = useCallback(async (): Promise<Result> => {
+    const google = await requestGoogleCredential();
+    // Cancelling the sheet is a choice, not a failure.
+    if (google.kind === 'cancelled') return { error: null };
+    if (google.kind === 'error') return { error: 'Could not start Google sign-in. Please try again.' };
+    // Not set up for the native sheet, or this device can't show it: the browser flow still works.
+    if (google.kind === 'unavailable') return signInWithGoogleInBrowser();
+
+    const { error } = await getSupabase().auth.signInWithIdToken({ provider: 'google', token: google.idToken });
+    if (error) {
+      // Diagnostic only, as in signInWithApple: most likely the Web client id is not in Supabase's Google Client IDs.
+      console.error('[auth:signInWithGoogle]', { name: error.name, status: error.status, message: error.message });
+      return { error: 'Google sign-in failed. Please try again.' };
+    }
+    return { error: null };
+  }, [signInWithGoogleInBrowser]);
 
   const signInWithApple = useCallback(async (): Promise<Result> => {
     const apple = await requestAppleCredential();
